@@ -1,0 +1,13 @@
+{
+  "name": "flodex",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/client",
+    "packages/*"
+  ],
+  "scripts": {
+    "client": "bun run --cwd apps/client start",
+    "gen:types": "cargo test -p protocol export_bindings --quiet"
+  }
+}

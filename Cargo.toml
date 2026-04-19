@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/crypto",
+    "crates/agent",
+    "crates/execution",
+    "crates/local_llm",
+    "apps/node",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Local crates
+protocol = { path = "crates/protocol" }
+crypto = { path = "crates/crypto" }
+agent = { path = "crates/agent" }
+execution = { path = "crates/execution" }
+local_llm = { path = "crates/local_llm" }
+
+# Async runtime + web
+tokio = { version = "1.35", features = ["full"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace"] }
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+base64 = "0.21"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ts-rs = "7.1"
+
+# HTTP client + state
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+dashmap = "5"
+dirs = "5"
+futures-util = "0.3"

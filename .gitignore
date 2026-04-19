@@ -1,0 +1,17 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Bun
+node_modules/
+bun.lockb
+*.log
+.DS_Store
+dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+.env
