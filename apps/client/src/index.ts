@@ -1,31 +1,24 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import { x25519 } from "@noble/curves/ed25519";
-import { xchacha20poly1305 } from "@noble/ciphers/chacha";
-import { hkdf } from "@noble/hashes/hkdf";
-import { sha256 } from "@noble/hashes/sha256";
-import { randomBytes } from "@noble/hashes/utils";
 import { base64 } from "@scure/base";
-import type {
-  AgentResponse,
-  AgentStep,
-  BackendType,
-  EncryptedRequest,
-  EncryptedResponse,
-  NodeInfo,
-} from "@flodex/protocol";
-
-const HKDF_INFO = new TextEncoder().encode("flodex-v0-session-key");
+import {
+  fetchNodeInfo,
+  matchJob,
+  runAgentLoop,
+  type ToolHandlerMap,
+} from "@flodex/client-lib";
+import type { BackendType, JobSpec } from "@flodex/protocol";
 
 type GlobalOpts = {
   node: string;
   backend: BackendType;
+  coordinator?: string;
+  maxTokens: string;
+  maxPrice: string;
 };
 
-type ClientToolResult = { content: string; isError: boolean };
-
-const clientTools: Record<string, (input: unknown) => Promise<ClientToolResult>> = {
+const clientTools: ToolHandlerMap = {
   async read_local_file(input) {
     const path = (input as { path?: unknown })?.path;
     if (typeof path !== "string") {
@@ -42,8 +35,11 @@ const clientTools: Record<string, (input: unknown) => Promise<ClientToolResult>>
 const program = new Command()
   .name("flodex")
   .description("flodex client CLI")
-  .option("-n, --node <url>", "node URL", "http://127.0.0.1:7777")
-  .option("-b, --backend <name>", "execution backend", "mock-tee");
+  .option("-n, --node <url>", "node URL (ignored if --coordinator is set)", "http://127.0.0.1:7777")
+  .option("-b, --backend <name>", "execution backend", "mock-tee")
+  .option("--coordinator <url>", "coordinator URL for node discovery")
+  .option("--max-tokens <n>", "estimated tokens for the job", "4000")
+  .option("--max-price <n>", "max price per 1K tokens", "1.0");
 
 program
   .command("info")
@@ -59,85 +55,44 @@ program
   .description("send an encrypted prompt through the agent loop")
   .action(async (prompt: string) => {
     const opts = program.opts<GlobalOpts>();
-    const info = await fetchNodeInfo(opts.node);
-    const nodePub = base64.decode(info.publicKey);
+    const target = await resolveNode(opts);
+    console.error(`[target] ${target.url}`);
+
+    const nodePub = base64.decode(target.publicKey);
     const sessionId = crypto.randomUUID();
 
-    let step: AgentStep = { type: "prompt", prompt };
-
-    while (true) {
-      const response = await sendStep(opts.node, opts.backend, nodePub, sessionId, step);
-
-      if (response.type === "final") {
-        console.log(response.content);
-        return;
-      }
-
-      console.error(
-        `[tool call] ${response.name}(${JSON.stringify(response.input)})`,
-      );
-      const handler = clientTools[response.name];
-      const result = handler
-        ? await handler(response.input)
-        : { content: `unknown client tool: ${response.name}`, isError: true };
-      if (result.isError) {
-        console.error(`[tool error] ${result.content}`);
-      }
-      step = {
-        type: "toolResult",
-        toolUseId: response.toolUseId,
-        content: result.content,
-        isError: result.isError,
-      };
-    }
+    const result = await runAgentLoop({
+      nodeUrl: target.url,
+      nodePub,
+      backend: opts.backend,
+      sessionId,
+      prompt,
+      tools: clientTools,
+      onEvent: (ev) => {
+        if (ev.kind === "toolCallStart") {
+          console.error(`[tool call] ${ev.name}(${JSON.stringify(ev.input)})`);
+        } else if (ev.kind === "toolCallEnd" && ev.isError) {
+          console.error(`[tool error] ${ev.name}`);
+        }
+      },
+    });
+    console.log(result);
   });
 
-async function fetchNodeInfo(node: string): Promise<NodeInfo> {
-  const res = await fetch(`${node}/info`);
-  if (!res.ok) {
-    throw new Error(`GET ${node}/info failed: ${res.status} ${await res.text()}`);
+async function resolveNode(
+  opts: GlobalOpts,
+): Promise<{ url: string; publicKey: string }> {
+  if (!opts.coordinator) {
+    const info = await fetchNodeInfo(opts.node);
+    return { url: opts.node, publicKey: info.publicKey };
   }
-  return (await res.json()) as NodeInfo;
-}
-
-async function sendStep(
-  node: string,
-  backend: BackendType,
-  nodePub: Uint8Array,
-  sessionId: string,
-  step: AgentStep,
-): Promise<AgentResponse> {
-  const clientPriv = x25519.utils.randomPrivateKey();
-  const clientPub = x25519.getPublicKey(clientPriv);
-  const shared = x25519.getSharedSecret(clientPriv, nodePub);
-  const key = hkdf(sha256, shared, new TextEncoder().encode(sessionId), HKDF_INFO, 32);
-
-  const plaintext = new TextEncoder().encode(JSON.stringify(step));
-  const nonce = randomBytes(24);
-  const ciphertext = xchacha20poly1305(key, nonce).encrypt(plaintext);
-
-  const req: EncryptedRequest = {
-    sessionId,
-    clientPublicKey: base64.encode(clientPub),
-    nonce: base64.encode(nonce),
-    ciphertext: base64.encode(ciphertext),
-    backend,
+  const spec: JobSpec = {
+    backend: opts.backend,
+    estimatedTokens: Number.parseInt(opts.maxTokens, 10),
+    maxPricePer1k: Number.parseFloat(opts.maxPrice),
   };
-
-  const res = await fetch(`${node}/execute`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  if (!res.ok) {
-    throw new Error(`POST ${node}/execute failed: ${res.status} ${await res.text()}`);
-  }
-
-  const enc = (await res.json()) as EncryptedResponse;
-  const respNonce = base64.decode(enc.nonce);
-  const respCipher = base64.decode(enc.ciphertext);
-  const respPlain = xchacha20poly1305(key, respNonce).decrypt(respCipher);
-  return JSON.parse(new TextDecoder().decode(respPlain)) as AgentResponse;
+  const match = await matchJob(opts.coordinator, spec);
+  return { url: match.url, publicKey: match.publicKey };
 }
 
 await program.parseAsync();

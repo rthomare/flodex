@@ -79,3 +79,53 @@ pub enum AgentResponse {
         input: serde_json::Value,
     },
 }
+
+// ---- Coordinator / discovery types ----
+
+/// Price a node will accept per 1K tokens for a given backend.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct BackendPrice {
+    pub backend: BackendType,
+    pub price_per_1k: f64,
+}
+
+/// Node advertises itself to the coordinator.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRegistration {
+    pub public_key: String,
+    pub url: String,
+    pub backends: Vec<BackendType>,
+    pub max_tokens: u32,
+    pub pricing: Vec<BackendPrice>,
+}
+
+/// Keepalive — the coordinator expires entries that stop heartbeating.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct NodeHeartbeat {
+    pub public_key: String,
+}
+
+/// Client's request for a node that fits these constraints.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct JobSpec {
+    pub backend: BackendType,
+    pub estimated_tokens: u32,
+    pub max_price_per_1k: f64,
+}
+
+/// Coordinator's answer — the node the client should talk to.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct JobMatch {
+    pub url: String,
+    pub public_key: String,
+}

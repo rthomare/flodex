@@ -14,10 +14,13 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crypto::{decrypt, derive_key, encrypt, NodeKeys};
 use execution::{ExecutionBackend, LocalLlmBackend, MockTeeBackend};
 use local_llm::{default_cache_dir, resolve, LlamaServer, ModelSpec, OpenAiProvider};
-use protocol::{AgentStep, BackendType, EncryptedRequest, EncryptedResponse, NodeInfo};
+use protocol::{
+    AgentStep, BackendPrice, BackendType, EncryptedRequest, EncryptedResponse, NodeHeartbeat,
+    NodeInfo, NodeRegistration,
+};
 use std::sync::Arc;
 use thiserror::Error;
-use tower_http::trace::TraceLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use x25519_dalek::PublicKey;
 
@@ -60,15 +63,15 @@ async fn main() -> Result<()> {
         _llama_server: llama_server,
     });
 
-    let mut enabled: Vec<&'static str> = Vec::new();
+    let mut backends: Vec<BackendType> = Vec::new();
     if state.mock_tee.is_some() {
-        enabled.push("mock-tee");
+        backends.push(BackendType::MockTee);
     }
     if state.local_llm.is_some() {
-        enabled.push("local");
+        backends.push(BackendType::Local);
     }
     tracing::info!(
-        backends = %enabled.join(","),
+        backends = ?backends,
         node_public_key = %B64.encode(state.keys.public.as_bytes()),
         "flodex node ready"
     );
@@ -76,16 +79,91 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/info", get(info))
         .route("/execute", post(execute))
+        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = std::env::var("FLODEX_NODE_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
+    let advertise_url =
+        std::env::var("FLODEX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
+
+    if let Ok(coord_url) = std::env::var("FLODEX_COORDINATOR") {
+        let pubkey_b64 = B64.encode(state.keys.public.as_bytes());
+        let reg = NodeRegistration {
+            public_key: pubkey_b64.clone(),
+            url: advertise_url,
+            backends: backends.clone(),
+            max_tokens: std::env::var("FLODEX_NODE_MAX_TOKENS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100_000),
+            pricing: read_pricing(&backends),
+        };
+        tokio::spawn(registration_loop(coord_url, reg, pubkey_b64));
+    }
+
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
     tracing::info!("flodex node listening on http://{addr}");
     axum::serve(listener, app).await.expect("serve");
     Ok(())
+}
+
+fn read_pricing(backends: &[BackendType]) -> Vec<BackendPrice> {
+    backends
+        .iter()
+        .map(|b| {
+            let env_key = match b {
+                BackendType::MockTee => "FLODEX_NODE_PRICE_MOCK_TEE",
+                BackendType::Local => "FLODEX_NODE_PRICE_LOCAL",
+                BackendType::Fhe => "FLODEX_NODE_PRICE_FHE",
+                BackendType::Mcp => "FLODEX_NODE_PRICE_MCP",
+            };
+            let price = std::env::var(env_key)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            BackendPrice {
+                backend: *b,
+                price_per_1k: price,
+            }
+        })
+        .collect()
+}
+
+async fn registration_loop(coord_url: String, reg: NodeRegistration, pubkey: String) {
+    let http = reqwest::Client::new();
+    let register_url = format!("{coord_url}/nodes/register");
+    let heartbeat_url = format!("{coord_url}/nodes/heartbeat");
+
+    loop {
+        match http.post(&register_url).json(&reg).send().await {
+            Ok(r) if r.status().is_success() => {
+                tracing::info!(coord = %coord_url, "registered with coordinator");
+                break;
+            }
+            Ok(r) => tracing::warn!(status = %r.status(), "coordinator register rejected"),
+            Err(e) => tracing::warn!("coordinator register failed: {e}"),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+
+    let hb = NodeHeartbeat {
+        public_key: pubkey.clone(),
+    };
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        match http.post(&heartbeat_url).json(&hb).send().await {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+                tracing::warn!("coordinator forgot us; re-registering");
+                let _ = http.post(&register_url).json(&reg).send().await;
+            }
+            Ok(r) => tracing::warn!(status = %r.status(), "heartbeat rejected"),
+            Err(e) => tracing::warn!("heartbeat failed: {e}"),
+        }
+    }
 }
 
 async fn init_backends() -> Result<(Option<MockTeeBackend>, Option<LocalLlmBackend>, Option<LlamaServer>)> {

@@ -7,3 +7,8 @@ export type { EncryptedResponse } from "./generated/EncryptedResponse.ts";
 export type { NodeInfo } from "./generated/NodeInfo.ts";
 export type { AgentStep } from "./generated/AgentStep.ts";
 export type { AgentResponse } from "./generated/AgentResponse.ts";
+export type { BackendPrice } from "./generated/BackendPrice.ts";
+export type { NodeRegistration } from "./generated/NodeRegistration.ts";
+export type { NodeHeartbeat } from "./generated/NodeHeartbeat.ts";
+export type { JobSpec } from "./generated/JobSpec.ts";
+export type { JobMatch } from "./generated/JobMatch.ts";

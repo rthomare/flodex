@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: #050510;
+  color: #e7ecf3;
+  font-family:
+    "SF Mono", "Geist Mono", ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(102, 204, 255, 0.06), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(180, 140, 255, 0.05), transparent 45%);
+  min-height: 100vh;
+}
+
+.glass {
+  background: rgba(10, 14, 28, 0.75);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(102, 204, 255, 0.15);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.hex-grid {
+  background-image:
+    linear-gradient(rgba(102, 204, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(102, 204, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+input,
+textarea,
+select {
+  background: rgba(5, 10, 24, 0.8);
+  border: 1px solid rgba(102, 204, 255, 0.2);
+  color: #e7ecf3;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(102, 204, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(102, 204, 255, 0.15);
+}
