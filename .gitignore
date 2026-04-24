@@ -8,6 +8,7 @@ bun.lockb
 *.log
 .DS_Store
 dist/
+.next/
 
 # Editor
 .vscode/
@@ -15,3 +16,6 @@ dist/
 *.swp
 
 .env
+
+
+

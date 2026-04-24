@@ -99,13 +99,14 @@ fn build_command(model: &Path, port: u16) -> Command {
 
     #[cfg(target_os = "macos")]
     if !sandbox_disabled {
+        // SBPL rejects raw IPs in `remote ip`; it only accepts hostnames like
+        // `localhost` or `*`. `llama-server` is a pure inbound server (we
+        // connect *to* it over loopback), so it needs zero outbound — any
+        // outbound attempt = exfiltration attempt.
         const PROFILE: &str = "\
 (version 1)
 (allow default)
 (deny network-outbound)
-(allow network-outbound (remote ip \"127.0.0.1:*\"))
-(allow network-outbound (remote ip \"localhost:*\"))
-(allow network-outbound (remote unix-socket))
 ";
         let mut cmd = Command::new("sandbox-exec");
         cmd.arg("-p")

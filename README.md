@@ -41,6 +41,7 @@ See `CLAUDE.md` for the full design brief, target architecture, and v0 scope.
 ```
 
 **Trust model:**
+
 - The **client** holds its own keys and picks which node/backend to trust.
 - The **coordinator** sees job specs (backend type, token estimate, price
   ceiling) but **never sees request bodies** — encrypted payloads flow
@@ -53,7 +54,28 @@ See `CLAUDE.md` for the full design brief, target architecture, and v0 scope.
 
 ## Quickstart (localhost, one terminal per process)
 
-Install prereqs (see `Prerequisites` below), then:
+**Fastest path — tmux:**
+
+```bash
+# One-time: fill out .env with at least ANTHROPIC_API_KEY and/or FLODEX_LLAMA_MODEL
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+echo "FLODEX_LLAMA_MODEL=hf://bartowski/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf" >> .env
+
+# Start everything in one tmux session
+bun run dev
+# or: ./scripts/dev.sh
+
+# Tear down
+bun run dev:kill
+```
+
+That spins up 5 named windows (`Ctrl-b 0–4` to switch): coordinator, mock-tee
+node, local node, dashboard, and a client shell with example commands. If a
+required env var is missing, the corresponding window prints a hint instead of
+failing silently.
+
+**Manual — one terminal per process** (install prereqs first — see
+`Prerequisites` below):
 
 ```bash
 # 1. Set your Anthropic API key for the Claude-backed backend
@@ -85,7 +107,7 @@ Add a second node with a local LLM:
 FLODEX_COORDINATOR=http://127.0.0.1:8000 \
 FLODEX_NODE_ADDR=127.0.0.1:7778 \
 FLODEX_NODE_PRICE_LOCAL=0 \
-FLODEX_LLAMA_MODEL=hf://bartowski/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+FLODEX_LLAMA_MODEL=hf://unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf \
 cargo run -p node
 ```
 
@@ -96,14 +118,15 @@ force-directed graph and lights up whichever one handles each request.
 
 ## Prerequisites
 
-| Tool       | Minimum                 | Notes                                                          |
-| ---------- | ----------------------- | -------------------------------------------------------------- |
-| Rust       | 1.74                    | Newer is fine; some deps are pinned to 1.74-compatible versions |
-| Bun        | 1.1+                    | JS runtime + package manager                                   |
-| llama.cpp  | recent `llama-server`   | Only needed for the `local` backend (`brew install llama.cpp`) |
-| macOS      | —                       | Sandbox (`sandbox-exec`) works on macOS; Linux/Windows unsandboxed (yet) |
+| Tool      | Minimum               | Notes                                                                    |
+| --------- | --------------------- | ------------------------------------------------------------------------ |
+| Rust      | 1.74                  | Newer is fine; some deps are pinned to 1.74-compatible versions          |
+| Bun       | 1.1+                  | JS runtime + package manager                                             |
+| llama.cpp | recent `llama-server` | Only needed for the `local` backend (`brew install llama.cpp`)           |
+| macOS     | —                     | Sandbox (`sandbox-exec`) works on macOS; Linux/Windows unsandboxed (yet) |
 
 Optional:
+
 - **Anthropic API key** for the `mock-tee` backend (Claude Opus 4.7 by default).
 - **HuggingFace token** (`HF_TOKEN`) only if pulling gated GGUF models.
 
@@ -113,29 +136,29 @@ Optional:
 
 ### Apps
 
-| App                          | Purpose                                                  | Language   |
-| ---------------------------- | -------------------------------------------------------- | ---------- |
-| `apps/node`                  | Axum HTTP server — `/info`, `/execute`; decrypts and runs agent loop | Rust       |
-| `apps/coordinator`           | Axum HTTP server — node registry + `/jobs/match`         | Rust       |
-| `apps/client`                | CLI that encrypts prompts, optionally discovers nodes    | TypeScript |
-| `apps/dashboard`             | Next.js + d3-force visualization for client-perspective debugging | TypeScript |
+| App                | Purpose                                                              | Language   |
+| ------------------ | -------------------------------------------------------------------- | ---------- |
+| `apps/node`        | Axum HTTP server — `/info`, `/execute`; decrypts and runs agent loop | Rust       |
+| `apps/coordinator` | Axum HTTP server — node registry + `/jobs/match`                     | Rust       |
+| `apps/client`      | CLI that encrypts prompts, optionally discovers nodes                | TypeScript |
+| `apps/dashboard`   | Next.js + d3-force visualization for client-perspective debugging    | TypeScript |
 
 ### Rust crates
 
-| Crate                 | Purpose                                                              |
-| --------------------- | -------------------------------------------------------------------- |
-| `crates/protocol`     | Wire-format types (source of truth). `ts-rs` emits matching TS.      |
-| `crates/crypto`       | X25519 ECDH + HKDF-SHA256 + XChaCha20-Poly1305                       |
-| `crates/agent`        | `ChatProvider` trait, Anthropic client, tool registry, agent loop    |
-| `crates/execution`    | `ExecutionBackend` trait + `MockTeeBackend` + `LocalLlmBackend`      |
-| `crates/local_llm`    | HF model downloader, sandboxed `llama-server` supervisor, OpenAI-compat client with Anthropic ↔ OpenAI translation |
+| Crate              | Purpose                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `crates/protocol`  | Wire-format types (source of truth). `ts-rs` emits matching TS.                                                    |
+| `crates/crypto`    | X25519 ECDH + HKDF-SHA256 + XChaCha20-Poly1305                                                                     |
+| `crates/agent`     | `ChatProvider` trait, Anthropic client, tool registry, agent loop                                                  |
+| `crates/execution` | `ExecutionBackend` trait + `MockTeeBackend` + `LocalLlmBackend`                                                    |
+| `crates/local_llm` | HF model downloader, sandboxed `llama-server` supervisor, OpenAI-compat client with Anthropic ↔ OpenAI translation |
 
 ### TypeScript packages
 
-| Package                        | Purpose                                                            |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `packages/protocol`            | Re-exports TS bindings generated from the Rust `protocol` crate    |
-| `packages/flodex-client`       | Shared encryption + agent-loop transport used by both the CLI and dashboard |
+| Package                  | Purpose                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `packages/protocol`      | Re-exports TS bindings generated from the Rust `protocol` crate             |
+| `packages/flodex-client` | Shared encryption + agent-loop transport used by both the CLI and dashboard |
 
 ---
 
@@ -143,12 +166,12 @@ Optional:
 
 Selected per request via the `backend` field on the encrypted envelope.
 
-| Backend     | ID          | Status                              | Enabled by                                                |
-| ----------- | ----------- | ----------------------------------- | --------------------------------------------------------- |
-| MockTEE     | `mock-tee`  | **Works** — Claude-backed today     | Set `ANTHROPIC_API_KEY`                                   |
-| Local LLM   | `local`     | **Works** — llama.cpp-backed        | Set `FLODEX_LLAMA_MODEL` (+ install `llama-server`)       |
-| FHE         | `fhe`       | Stub only                           | — (planned research track)                                |
-| MCP         | `mcp`       | Stub only                           | — (planned)                                               |
+| Backend   | ID         | Status                          | Enabled by                                          |
+| --------- | ---------- | ------------------------------- | --------------------------------------------------- |
+| MockTEE   | `mock-tee` | **Works** — Claude-backed today | Set `ANTHROPIC_API_KEY`                             |
+| Local LLM | `local`    | **Works** — llama.cpp-backed    | Set `FLODEX_LLAMA_MODEL` (+ install `llama-server`) |
+| FHE       | `fhe`      | Stub only                       | — (planned research track)                          |
+| MCP       | `mcp`      | Stub only                       | — (planned)                                         |
 
 A single node can host multiple backends at once; the coordinator advertises
 which ones each node supports.
@@ -170,11 +193,11 @@ tool calling.
 
 Node spawns `llama-server` as a child process inside an OS sandbox:
 
-| OS       | Status                        | How                                               |
-| -------- | ----------------------------- | ------------------------------------------------- |
-| macOS    | **network-outbound blocked**  | `sandbox-exec` with a `deny network-outbound` profile |
-| Linux    | Unsandboxed (with warning)    | Follow-up: seccomp-bpf or `systemd-run` scopes    |
-| Windows  | Unsandboxed                   | Follow-up                                         |
+| OS      | Status                       | How                                                   |
+| ------- | ---------------------------- | ----------------------------------------------------- |
+| macOS   | **network-outbound blocked** | `sandbox-exec` with a `deny network-outbound` profile |
+| Linux   | Unsandboxed (with warning)   | Follow-up: seccomp-bpf or `systemd-run` scopes        |
+| Windows | Unsandboxed                  | Follow-up                                             |
 
 `FLODEX_SANDBOX=0` bypasses the wrapper (debug escape hatch).
 
@@ -186,11 +209,11 @@ Tools are Anthropic-shaped (`{name, description, input_schema}`) internally. The
 agent crate translates to OpenAI function-call shape for the local backend
 transparently.
 
-| Tool               | Side    | Description                                                      |
-| ------------------ | ------- | ---------------------------------------------------------------- |
-| `current_time`     | Node    | Returns current UTC time as ISO 8601                             |
-| `web_fetch`        | Node    | GETs an http(s) URL, returns up to ~100KB of body text. Loopback hosts blocked. |
-| `read_local_file`  | Client  | Reads a file on the client's filesystem. Proves the cross-boundary privacy flow — the prompt decrypts *on the node*, but *sensitive local data stays local*. |
+| Tool              | Side   | Description                                                                                                                                                  |
+| ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `current_time`    | Node   | Returns current UTC time as ISO 8601                                                                                                                         |
+| `web_fetch`       | Node   | GETs an http(s) URL, returns up to ~100KB of body text. Loopback hosts blocked.                                                                              |
+| `read_local_file` | Client | Reads a file on the client's filesystem. Proves the cross-boundary privacy flow — the prompt decrypts _on the node_, but _sensitive local data stays local_. |
 
 When a model calls a client-side tool, the node pauses the loop and asks the
 client to execute it; the client returns the result in the next encrypted
@@ -234,6 +257,7 @@ turns (though the cache cost-model assumes you don't).
 ## Encryption
 
 Per request:
+
 1. Client generates an ephemeral X25519 keypair.
 2. Shared secret = ECDH(client_priv, node_pub).
 3. Symmetric key = HKDF-SHA256(shared, salt = sessionId, info = "flodex-v0-session-key").
@@ -243,6 +267,7 @@ Per request:
    `POST /execute` on the node.
 
 Node:
+
 1. Derives the same symmetric key using its static secret.
 2. Decrypts, runs the agent step, re-encrypts with a fresh nonce.
 
@@ -253,15 +278,15 @@ need stable node identity across restarts.
 
 ## Coordinator
 
-Thin axum server that helps the client *discover* a node. Privacy-preserving by
+Thin axum server that helps the client _discover_ a node. Privacy-preserving by
 design: sees job specs only, never request bodies.
 
-| Endpoint               | Method | Purpose                                                                 |
-| ---------------------- | ------ | ----------------------------------------------------------------------- |
-| `/nodes/register`      | POST   | Node advertises its pubkey, URL, backends, capacity, pricing            |
-| `/nodes/heartbeat`     | POST   | Keepalive — entries expire after 30s without one                        |
-| `/nodes`               | GET    | Current registry snapshot (used by the dashboard for its node graph)    |
-| `/jobs/match`          | POST   | Client POSTs a `JobSpec` (backend + estimated tokens + max price/1K); first matching node is returned |
+| Endpoint           | Method | Purpose                                                                                               |
+| ------------------ | ------ | ----------------------------------------------------------------------------------------------------- |
+| `/nodes/register`  | POST   | Node advertises its pubkey, URL, backends, capacity, pricing                                          |
+| `/nodes/heartbeat` | POST   | Keepalive — entries expire after 30s without one                                                      |
+| `/nodes`           | GET    | Current registry snapshot (used by the dashboard for its node graph)                                  |
+| `/jobs/match`      | POST   | Client POSTs a `JobSpec` (backend + estimated tokens + max price/1K); first matching node is returned |
 
 Matching policy is first-match today — easy to swap for cheapest-first or
 round-robin. Bidding/auction layers cleanly on top (RFQ round-trip before
@@ -278,6 +303,7 @@ amber + green on void black, glassmorphic panels, monospace, animated edge
 particles.
 
 Panels:
+
 - **Graph (center).** Force-directed; purple "client" hub; cyan nodes around
   it; edges light up green with a particle when a request routes through.
   Click a node to inspect its pricing and backends.
@@ -293,27 +319,30 @@ See the dashboard README section in `apps/dashboard/` for per-panel details.
 ## Environment variables
 
 ### Node
-| Var                                        | Default                        | Purpose                                              |
-| ------------------------------------------ | ------------------------------ | ---------------------------------------------------- |
-| `ANTHROPIC_API_KEY`                        | —                              | Enables the `mock-tee` backend                       |
-| `FLODEX_NODE_MODEL`                        | `claude-opus-4-7`              | Anthropic model used by `mock-tee`                   |
-| `FLODEX_LLAMA_MODEL`                       | —                              | Enables the `local` backend (HF/file spec)           |
-| `FLODEX_CACHE`                             | `~/.cache/flodex/models`       | Model-download cache                                 |
-| `FLODEX_SANDBOX`                           | on                             | Set to `0` to bypass the llama-server sandbox        |
-| `FLODEX_NODE_ADDR`                         | `127.0.0.1:7777`               | Bind address                                         |
-| `FLODEX_NODE_URL`                          | `http://$FLODEX_NODE_ADDR`     | URL advertised to the coordinator                    |
-| `FLODEX_NODE_MAX_TOKENS`                   | `100000`                       | Capacity advertised                                  |
-| `FLODEX_NODE_PRICE_MOCK_TEE`               | `0.0`                          | Price per 1K tokens for mock-tee                     |
-| `FLODEX_NODE_PRICE_LOCAL`                  | `0.0`                          | Price per 1K tokens for local                        |
-| `FLODEX_COORDINATOR`                       | —                              | If set, node registers + heartbeats here             |
-| `HF_TOKEN`                                 | —                              | Optional HuggingFace auth token                      |
+
+| Var                          | Default                    | Purpose                                       |
+| ---------------------------- | -------------------------- | --------------------------------------------- |
+| `ANTHROPIC_API_KEY`          | —                          | Enables the `mock-tee` backend                |
+| `FLODEX_NODE_MODEL`          | `claude-opus-4-7`          | Anthropic model used by `mock-tee`            |
+| `FLODEX_LLAMA_MODEL`         | —                          | Enables the `local` backend (HF/file spec)    |
+| `FLODEX_CACHE`               | `~/.cache/flodex/models`   | Model-download cache                          |
+| `FLODEX_SANDBOX`             | on                         | Set to `0` to bypass the llama-server sandbox |
+| `FLODEX_NODE_ADDR`           | `127.0.0.1:7777`           | Bind address                                  |
+| `FLODEX_NODE_URL`            | `http://$FLODEX_NODE_ADDR` | URL advertised to the coordinator             |
+| `FLODEX_NODE_MAX_TOKENS`     | `100000`                   | Capacity advertised                           |
+| `FLODEX_NODE_PRICE_MOCK_TEE` | `0.0`                      | Price per 1K tokens for mock-tee              |
+| `FLODEX_NODE_PRICE_LOCAL`    | `0.0`                      | Price per 1K tokens for local                 |
+| `FLODEX_COORDINATOR`         | —                          | If set, node registers + heartbeats here      |
+| `HF_TOKEN`                   | —                          | Optional HuggingFace auth token               |
 
 ### Coordinator
-| Var                         | Default             | Purpose      |
-| --------------------------- | ------------------- | ------------ |
-| `FLODEX_COORDINATOR_ADDR`   | `127.0.0.1:8000`    | Bind address |
+
+| Var                       | Default          | Purpose      |
+| ------------------------- | ---------------- | ------------ |
+| `FLODEX_COORDINATOR_ADDR` | `127.0.0.1:8000` | Bind address |
 
 ### Client CLI
+
 Flags: `-n/--node`, `-b/--backend`, `--coordinator`, `--max-tokens`, `--max-price`.
 
 ---
@@ -399,15 +428,16 @@ those pins in `Cargo.lock`.
 
 ## Roadmap (M1 – M5 from `CLAUDE.md`)
 
-| Milestone | Status    | Notes                                                             |
-| --------- | --------- | ----------------------------------------------------------------- |
-| M1: Encrypted echo        | ✅        | Client↔node X25519 + XChaCha20-Poly1305                           |
-| M2: Backend abstraction   | ✅        | `ExecutionBackend` trait + `ChatProvider` trait                   |
-| M3: Agent loop            | ✅        | Plan → execute → respond, with thinking blocks preserved         |
-| M4: Tool calls            | ✅        | Node-side + client-side tool execution, cross-boundary session   |
-| M5: Multiple backends     | 🟡 partial | MockTEE + Local done; FHE + MCP remain stubs                     |
+| Milestone               | Status     | Notes                                                          |
+| ----------------------- | ---------- | -------------------------------------------------------------- |
+| M1: Encrypted echo      | ✅         | Client↔node X25519 + XChaCha20-Poly1305                        |
+| M2: Backend abstraction | ✅         | `ExecutionBackend` trait + `ChatProvider` trait                |
+| M3: Agent loop          | ✅         | Plan → execute → respond, with thinking blocks preserved       |
+| M4: Tool calls          | ✅         | Node-side + client-side tool execution, cross-boundary session |
+| M5: Multiple backends   | 🟡 partial | MockTEE + Local done; FHE + MCP remain stubs                   |
 
 **Beyond M5**
+
 - Harden Linux/Windows sandboxing of `llama-server`
 - Real token usage piped into `AgentEvent` (replace cost estimate)
 - LocalStorage persistence for the dashboard event log
