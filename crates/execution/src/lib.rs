@@ -5,7 +5,9 @@
 //! the same agent-loop + session machinery; they differ only in their
 //! `BackendType` label and metadata.
 
-use agent::{AgentLoop, AgentSession, AgentStepInput, AgentStepOutcome};
+use agent::{
+    AgentLoop, AgentSession, AgentStepInput, AgentStepOutcome, ChatRequest, ChatResult,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -39,6 +41,10 @@ pub trait ExecutionBackend: Send + Sync {
     fn backend_type(&self) -> BackendType;
     fn metadata(&self) -> BackendMetadata;
     async fn step(&self, session_id: &str, input: AgentStep) -> Result<AgentResponse>;
+    /// Stateless provider passthrough — used by the Claude Code proxy where
+    /// the caller already runs its own agent loop. Bypasses session state,
+    /// node-side tools, and the configured system prompt.
+    async fn complete(&self, req: ChatRequest) -> Result<ChatResult>;
 }
 
 /// Shared agent-loop + session-state machinery. Not public — backend variants
@@ -65,6 +71,10 @@ impl AgentRuntime {
             .entry(id.to_string())
             .or_insert(new_session)
             .clone()
+    }
+
+    async fn complete(&self, req: ChatRequest) -> Result<ChatResult> {
+        self.agent.complete(req).await
     }
 
     async fn step(&self, session_id: &str, input: AgentStep) -> Result<AgentResponse> {
@@ -132,6 +142,10 @@ impl ExecutionBackend for MockTeeBackend {
     async fn step(&self, session_id: &str, input: AgentStep) -> Result<AgentResponse> {
         self.inner.step(session_id, input).await
     }
+
+    async fn complete(&self, req: ChatRequest) -> Result<ChatResult> {
+        self.inner.complete(req).await
+    }
 }
 
 /// Local-LLM backend — a local model (via `llama-server`) serves inference
@@ -164,5 +178,9 @@ impl ExecutionBackend for LocalLlmBackend {
 
     async fn step(&self, session_id: &str, input: AgentStep) -> Result<AgentResponse> {
         self.inner.step(session_id, input).await
+    }
+
+    async fn complete(&self, req: ChatRequest) -> Result<ChatResult> {
+        self.inner.complete(req).await
     }
 }

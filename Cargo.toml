@@ -8,6 +8,7 @@ members = [
     "crates/local_llm",
     "apps/node",
     "apps/coordinator",
+    "apps/proxy",
 ]
 
 [workspace.package]

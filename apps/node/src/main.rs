@@ -1,6 +1,6 @@
 use agent::{
-    AgentLoop, AnthropicClient, AnthropicProvider, ChatProvider, CurrentTimeTool, DEFAULT_MODEL,
-    Tool, WebFetchTool, read_local_file_def,
+    AgentLoop, AnthropicClient, AnthropicProvider, ChatProvider, ChatRequest, CurrentTimeTool,
+    DEFAULT_MODEL, Tool, WebFetchTool, read_local_file_def,
 };
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -198,6 +198,7 @@ async fn main() -> Result<()> {
         .route("/info", get(info))
         .route("/activity", get(activity))
         .route("/execute", post(execute))
+        .route("/proxy/complete", post(proxy_complete))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
@@ -410,6 +411,65 @@ async fn execute(
 
     Ok(Json(EncryptedResponse {
         session_id,
+        nonce: B64.encode(resp_nonce),
+        ciphertext: B64.encode(resp_ct),
+    }))
+}
+
+/// Stateless completion passthrough used by the Claude Code proxy. Same
+/// crypto envelope as `/execute`, but the plaintext is a `ChatRequest` and
+/// the response is a `ChatResult` — no agent loop, no session state, no
+/// node-side tool dispatch. The caller (the proxy) brings its own.
+async fn proxy_complete(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EncryptedRequest>,
+) -> Result<Json<EncryptedResponse>, ApiError> {
+    let client_pub = decode_client_pub(&req.client_public_key)?;
+    let shared = state.keys.shared_secret(&client_pub);
+    let key = derive_key(&shared, &req.session_id);
+
+    let nonce = B64
+        .decode(&req.nonce)
+        .map_err(|e| ApiError::BadRequest(format!("invalid nonce b64: {e}")))?;
+    let ciphertext = B64
+        .decode(&req.ciphertext)
+        .map_err(|e| ApiError::BadRequest(format!("invalid ciphertext b64: {e}")))?;
+    let plaintext = decrypt(&key, &nonce, &ciphertext)
+        .map_err(|e| ApiError::BadRequest(format!("decrypt: {e}")))?;
+    let chat_req: ChatRequest = serde_json::from_slice(&plaintext).map_err(|e| {
+        ApiError::BadRequest(format!("plaintext is not a valid ChatRequest: {e}"))
+    })?;
+
+    let backend: &dyn ExecutionBackend = match req.backend {
+        BackendType::MockTee => state.mock_tee.as_ref().ok_or_else(|| {
+            ApiError::NotImplemented(
+                "mock-tee not configured — set ANTHROPIC_API_KEY to enable".into(),
+            )
+        })?,
+        BackendType::Local => state.local_llm.as_ref().ok_or_else(|| {
+            ApiError::NotImplemented(
+                "local not configured — set FLODEX_LLAMA_MODEL to enable".into(),
+            )
+        })?,
+        other => {
+            return Err(ApiError::NotImplemented(format!(
+                "backend {other:?} not wired yet"
+            )))
+        }
+    };
+
+    let chat_result = backend
+        .complete(chat_req)
+        .await
+        .map_err(|e| ApiError::Internal(format!("backend complete: {e}")))?;
+
+    let resp_bytes = serde_json::to_vec(&chat_result)
+        .map_err(|e| ApiError::Internal(format!("serialize response: {e}")))?;
+    let (resp_nonce, resp_ct) =
+        encrypt(&key, &resp_bytes).map_err(|e| ApiError::Internal(format!("encrypt: {e}")))?;
+
+    Ok(Json(EncryptedResponse {
+        session_id: req.session_id,
         nonce: B64.encode(resp_nonce),
         ciphertext: B64.encode(resp_ct),
     }))

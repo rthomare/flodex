@@ -78,6 +78,13 @@ impl AgentLoop {
         }
     }
 
+    /// Direct provider passthrough (no agent loop, no tool dispatch, no
+    /// session state). Used by the Claude Code proxy: the caller already has
+    /// its own agent loop and just needs the underlying chat seam.
+    pub async fn complete(&self, req: ChatRequest) -> Result<ChatResult> {
+        self.provider.complete(req).await
+    }
+
     pub async fn step(
         &self,
         session: &mut AgentSession,
