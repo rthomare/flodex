@@ -112,29 +112,73 @@ impl AgentLoop {
             match resp.stop_reason.as_str() {
                 "end_turn" => return Ok(AgentStepOutcome::Final(extract_text(&resp.content))),
                 "tool_use" => {
-                    let (id, name, tool_input) = find_tool_use(&resp.content)?;
-                    match self.registry.find(&name) {
-                        Some(Tool::Node(executor)) => {
-                            let (content, is_error) = match executor.execute(tool_input).await {
-                                Ok(s) => (s, false),
-                                Err(e) => (format!("tool error: {e}"), true),
-                            };
-                            session
-                                .messages
-                                .push(tool_result_message(&id, &content, is_error));
-                        }
-                        Some(Tool::Client(_)) => {
-                            return Ok(AgentStepOutcome::NeedsClientTool {
-                                tool_use_id: id,
-                                name,
-                                input: tool_input,
-                            });
-                        }
-                        None => {
-                            let msg = format!("unknown tool `{name}`");
-                            session.messages.push(tool_result_message(&id, &msg, true));
+                    // The model can emit multiple tool_use blocks in one
+                    // assistant message (parallel tool calls). Anthropic
+                    // requires every tool_use in a message to have a
+                    // matching tool_result in the immediately-following
+                    // user message — so we must execute them all and batch
+                    // their results into a single user turn.
+                    let tool_uses = collect_tool_uses(&resp.content);
+                    if tool_uses.is_empty() {
+                        return Err(anyhow!(
+                            "stop_reason=tool_use but no tool_use blocks in content"
+                        ));
+                    }
+
+                    // Classify before doing any work. Mixed node+client (or
+                    // multiple client) calls in one turn don't fit the wire
+                    // protocol — we only carry one client tool round trip
+                    // at a time, with no place to stash the others' results.
+                    let mut has_node = false;
+                    let mut client_count = 0usize;
+                    for (_, name, _) in &tool_uses {
+                        match self.registry.find(name) {
+                            Some(Tool::Node(_)) | None => has_node = true,
+                            Some(Tool::Client(_)) => client_count += 1,
                         }
                     }
+                    if client_count > 0 && (has_node || client_count > 1) {
+                        return Err(anyhow!(
+                            "model returned mixed node/client or multiple client \
+                             tool calls in one turn; not supported by the current \
+                             wire protocol"
+                        ));
+                    }
+
+                    if client_count == 1 {
+                        // Single client tool: hand off to the caller.
+                        let (id, name, input) = tool_uses
+                            .into_iter()
+                            .find(|(_, n, _)| {
+                                matches!(self.registry.find(n), Some(Tool::Client(_)))
+                            })
+                            .expect("client tool present");
+                        return Ok(AgentStepOutcome::NeedsClientTool {
+                            tool_use_id: id,
+                            name,
+                            input,
+                        });
+                    }
+
+                    // All node-side (or unknown — which we surface as an error
+                    // tool_result so the model can recover). Execute each in
+                    // declaration order, then push a single user message with
+                    // every tool_result block.
+                    let mut blocks: Vec<Value> = Vec::with_capacity(tool_uses.len());
+                    for (id, name, input) in tool_uses {
+                        let (content, is_error) = match self.registry.find(&name) {
+                            Some(Tool::Node(executor)) => match executor.execute(input).await {
+                                Ok(s) => (s, false),
+                                Err(e) => (format!("tool error: {e}"), true),
+                            },
+                            Some(Tool::Client(_)) => unreachable!("filtered above"),
+                            None => (format!("unknown tool `{name}`"), true),
+                        };
+                        blocks.push(tool_result_block(&id, &content, is_error));
+                    }
+                    session
+                        .messages
+                        .push(json!({ "role": "user", "content": blocks }));
                 }
                 "pause_turn" => continue,
                 other => return Err(anyhow!("unexpected stop_reason: {other}")),
@@ -167,7 +211,7 @@ fn input_to_user_message(input: AgentStepInput) -> Value {
     }
 }
 
-fn tool_result_message(tool_use_id: &str, content: &str, is_error: bool) -> Value {
+fn tool_result_block(tool_use_id: &str, content: &str, is_error: bool) -> Value {
     let mut block = json!({
         "type": "tool_result",
         "tool_use_id": tool_use_id,
@@ -176,26 +220,20 @@ fn tool_result_message(tool_use_id: &str, content: &str, is_error: bool) -> Valu
     if is_error {
         block["is_error"] = json!(true);
     }
-    json!({ "role": "user", "content": [block] })
+    block
 }
 
-fn find_tool_use(content: &[Value]) -> Result<(String, String, Value)> {
-    let block = content
+fn collect_tool_uses(content: &[Value]) -> Vec<(String, String, Value)> {
+    content
         .iter()
-        .find(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
-        .ok_or_else(|| anyhow!("stop_reason=tool_use but no tool_use block in content"))?;
-    let id = block
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_use block missing id"))?
-        .to_string();
-    let name = block
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_use block missing name"))?
-        .to_string();
-    let input = block.get("input").cloned().unwrap_or(Value::Null);
-    Ok((id, name, input))
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .filter_map(|b| {
+            let id = b.get("id").and_then(Value::as_str)?.to_string();
+            let name = b.get("name").and_then(Value::as_str)?.to_string();
+            let input = b.get("input").cloned().unwrap_or(Value::Null);
+            Some((id, name, input))
+        })
+        .collect()
 }
 
 fn extract_text(content: &[Value]) -> String {

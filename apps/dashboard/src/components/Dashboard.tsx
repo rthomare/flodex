@@ -35,8 +35,15 @@ const browserTools: ToolHandlerMap = {
 export default function Dashboard() {
   const [coordinatorUrl, setCoordinatorUrl] = useState("http://127.0.0.1:8000");
   const { theme, toggle: toggleTheme } = useTheme();
-  const { nodes, error: nodesError } = useNodes(coordinatorUrl);
-  const activityEntries = useNodeActivity(nodes);
+  const { nodes: rawNodes, error: nodesError } = useNodes(coordinatorUrl);
+  const { entries: activityEntries, aliveUrls } = useNodeActivity(rawNodes);
+  // Coordinator entries linger up to ~30s after a node dies (heartbeat
+  // timeout). Filter through the activity hook's own liveness probe so dead
+  // nodes drop off the canvas in ~2.5s instead.
+  const nodes = useMemo(
+    () => rawNodes.filter((n) => aliveUrls.has(n.url)),
+    [rawNodes, aliveUrls],
+  );
 
   const [localSessions, setLocalSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -345,23 +352,64 @@ function sessionsToActiveRequests(
   sessions: SessionRecord[],
   now: number,
 ): ActiveRequest[] {
+  const FADE_MS = 1500;
   const out: ActiveRequest[] = [];
   for (const s of sessions) {
     if (!s.nodeUrl) continue;
-    // Render a ball if in-flight OR if completed within the last 1.5s
-    // (so the ball snaps to the node + fades instead of vanishing).
-    const endedRecently = s.endedAt !== null && now - s.endedAt < 1500;
-    if (s.endedAt !== null && !endedRecently) continue;
-    out.push({
-      nodeUrl: s.nodeUrl,
-      sessionId: s.sessionId,
-      backend: s.backend,
-      startedAt: s.startedAt,
-      endedAt: s.endedAt,
-      status: s.status,
-      lastToolName: s.lastToolName,
-      source: s.source,
-    });
+
+    // 1) Forward request (client → node).
+    const endedRecently = s.endedAt !== null && now - s.endedAt < FADE_MS;
+    if (s.endedAt === null || endedRecently) {
+      out.push({
+        nodeUrl: s.nodeUrl,
+        sessionId: s.sessionId,
+        backend: s.backend,
+        startedAt: s.startedAt,
+        endedAt: s.endedAt,
+        status: s.status,
+        lastToolName: s.lastToolName,
+        source: s.source,
+        kind: "request",
+        label: s.backend,
+      });
+    }
+
+    // 2) Tool calls (node → client). For dashboard-initiated sessions we
+    // have explicit start/end timestamps in `toolCalls[]`. For remote (CLI)
+    // sessions we only see the node's `waiting-tool` status flag, so we
+    // synthesize an in-flight entry for the duration the status is set.
+    if (s.source === "local") {
+      for (const tc of s.toolCalls) {
+        const tcEnded = tc.endedAt !== null && now - tc.endedAt < FADE_MS;
+        if (tc.endedAt === null || tcEnded) {
+          out.push({
+            nodeUrl: s.nodeUrl,
+            sessionId: s.sessionId,
+            backend: s.backend,
+            startedAt: tc.startedAt,
+            endedAt: tc.endedAt,
+            status: tc.isError ? "error" : "running",
+            lastToolName: tc.name,
+            source: s.source,
+            kind: "tool-call",
+            label: `tool: ${tc.name}`,
+          });
+        }
+      }
+    } else if (s.status === "waiting-tool" && s.lastToolName) {
+      out.push({
+        nodeUrl: s.nodeUrl,
+        sessionId: s.sessionId,
+        backend: s.backend,
+        startedAt: s.lastUpdate,
+        endedAt: null,
+        status: "running",
+        lastToolName: s.lastToolName,
+        source: s.source,
+        kind: "tool-call",
+        label: `tool: ${s.lastToolName}`,
+      });
+    }
   }
   return out;
 }

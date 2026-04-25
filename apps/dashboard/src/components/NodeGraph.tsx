@@ -13,7 +13,13 @@ import {
 import type { BackendType, NodeRegistration } from "@flodex/protocol";
 import type { SessionRecord } from "@/lib/events";
 
-/** A ball that should be drawn on an edge. */
+/**
+ * A ball that should be drawn on an edge. `kind` selects the direction:
+ *   - "request"   : client → node (the user's prompt / tool result)
+ *   - "tool-call" : node → client (the node asking for a client-side tool)
+ * The `label` is a short string rendered in screen-coords next to the dot.
+ */
+export type ActiveRequestKind = "request" | "tool-call";
 export interface ActiveRequest {
   nodeUrl: string;
   sessionId: string;
@@ -23,6 +29,8 @@ export interface ActiveRequest {
   status: SessionRecord["status"];
   lastToolName?: string;
   source: SessionRecord["source"];
+  kind: ActiveRequestKind;
+  label: string;
 }
 
 interface GraphNode extends SimulationNodeDatum {
@@ -117,6 +125,12 @@ interface CanvasTheme {
   panelText: string;
   indicatorPanel: string;
   indicatorBorder: string;
+  /** Color for tool-call balls (node → client direction). */
+  toolCallColor: string;
+  toolCallGlowRgb: string;
+  /** Translucent pill behind each floating ball label. */
+  labelBg: string;
+  labelBorder: string;
 }
 
 const CANVAS_THEMES: Record<Theme, CanvasTheme> = {
@@ -141,6 +155,10 @@ const CANVAS_THEMES: Record<Theme, CanvasTheme> = {
     panelText: "#e7ecf3",
     indicatorPanel: "rgba(5, 10, 24, 0.85)",
     indicatorBorder: "rgba(102, 204, 255, 0.5)",
+    toolCallColor: "#b48cff",
+    toolCallGlowRgb: "180, 140, 255",
+    labelBg: "rgba(5, 10, 24, 0.78)",
+    labelBorder: "rgba(102, 204, 255, 0.28)",
   },
   light: {
     edgeRgb: "20, 80, 140",
@@ -163,6 +181,10 @@ const CANVAS_THEMES: Record<Theme, CanvasTheme> = {
     panelText: "#0a1224",
     indicatorPanel: "rgba(255, 255, 255, 0.92)",
     indicatorBorder: "rgba(20, 80, 140, 0.5)",
+    toolCallColor: "#7c4dff",
+    toolCallGlowRgb: "124, 77, 255",
+    labelBg: "rgba(255, 255, 255, 0.92)",
+    labelBorder: "rgba(20, 80, 140, 0.3)",
   },
 };
 
@@ -211,8 +233,14 @@ export default function NodeGraph({
     height: number;
     view: View;
     drag: DragState;
-    /** Ball hit-test rects in world coords. */
-    ballRects: Array<{ x: number; y: number; r: number; req: ActiveRequest }>;
+    /** Ball hit-test rects in world coords; alpha tracks the in-flight fade. */
+    ballRects: Array<{
+      x: number;
+      y: number;
+      r: number;
+      req: ActiveRequest;
+      alpha: number;
+    }>;
     hoveredBall: { req: ActiveRequest; x: number; y: number } | null;
     /** Wall-clock of the last scale change; drives the zoom indicator fade. */
     lastZoomAt: number;
@@ -425,20 +453,27 @@ export default function NodeGraph({
       }
 
       // Balls — one per active request, position = progress easing.
+      // Direction is selected by `kind`: a "request" travels client → node,
+      // a "tool-call" travels node → client.
       s.ballRects = [];
       if (clientNode && clientNode.x != null && clientNode.y != null) {
-        const sx = clientNode.x;
-        const sy = clientNode.y;
         for (const req of s.activeRequests) {
           const tgt = nodeByUrl.get(req.nodeUrl);
           if (!tgt || tgt.x == null || tgt.y == null) continue;
           const { p, alpha } = requestProgress(req, drawNow);
           if (alpha <= 0) continue;
 
-          const px = sx + (tgt.x - sx) * p;
-          const py = sy + (tgt.y - sy) * p;
+          const fromX = req.kind === "request" ? clientNode.x : tgt.x;
+          const fromY = req.kind === "request" ? clientNode.y : tgt.y;
+          const toX = req.kind === "request" ? tgt.x : clientNode.x;
+          const toY = req.kind === "request" ? tgt.y : clientNode.y;
+          const px = fromX + (toX - fromX) * p;
+          const py = fromY + (toY - fromY) * p;
+
           const color =
-            req.status === "error"
+            req.kind === "tool-call"
+              ? t.toolCallColor
+              : req.status === "error"
               ? "#ff5566"
               : req.status === "waiting-tool"
               ? "#ffbb44"
@@ -462,7 +497,7 @@ export default function NodeGraph({
           ctx!.fill();
           ctx!.globalAlpha = 1;
 
-          s.ballRects.push({ x: px, y: py, r: 10, req });
+          s.ballRects.push({ x: px, y: py, r: 10, req, alpha });
         }
       }
 
@@ -520,6 +555,51 @@ export default function NodeGraph({
       }
 
       ctx!.restore();
+
+      // Floating ball labels — drawn in screen coords so they stay at a
+      // constant size regardless of zoom. Skip the ball that's currently
+      // hovered (the tooltip below covers it with more detail).
+      const hoveredBall = s.hoveredBall;
+      ctx!.font = "10px SF Mono, Geist Mono, ui-monospace, monospace";
+      for (const ball of s.ballRects) {
+        if (
+          hoveredBall &&
+          hoveredBall.req.sessionId === ball.req.sessionId &&
+          hoveredBall.req.kind === ball.req.kind
+        ) {
+          continue;
+        }
+        const sx = width / 2 + view.tx + ball.x * view.scale;
+        const sy = height / 2 + view.ty + ball.y * view.scale;
+        const text = ball.req.label;
+        const padX = 5;
+        const labelH = 16;
+        const tw = ctx!.measureText(text).width;
+        const labelW = tw + padX * 2;
+        const offsetX = 10;
+        let lx = sx + offsetX;
+        let ly = sy - labelH / 2;
+        // Flip to the left side of the dot if the label would clip the canvas.
+        if (lx + labelW > width - 4) lx = sx - offsetX - labelW;
+        if (ly < 4) ly = 4;
+        if (ly + labelH > height - 4) ly = height - 4 - labelH;
+
+        ctx!.globalAlpha = ball.alpha;
+        ctx!.fillStyle = t.labelBg;
+        ctx!.strokeStyle = t.labelBorder;
+        ctx!.lineWidth = 1;
+        ctx!.beginPath();
+        ctx!.rect(lx, ly, labelW, labelH);
+        ctx!.fill();
+        ctx!.stroke();
+
+        ctx!.fillStyle = t.panelText;
+        ctx!.textAlign = "left";
+        ctx!.textBaseline = "middle";
+        ctx!.fillText(text, lx + padX, ly + labelH / 2);
+        ctx!.globalAlpha = 1;
+      }
+      ctx!.textBaseline = "alphabetic";
 
       // Hover tooltip — drawn in screen coords so it stays at constant size.
       if (s.hoveredBall) {
