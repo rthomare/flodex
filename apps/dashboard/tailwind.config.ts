@@ -5,8 +5,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // CSS-var driven semantic tokens (theme-aware via [data-theme]).
+        // Vars hold space-separated R G B so Tailwind's <alpha-value>
+        // syntax (e.g. `text-fg/40`) composes correctly.
+        bg: "rgb(var(--bg) / <alpha-value>)",
+        fg: "rgb(var(--fg) / <alpha-value>)",
+        panel: "rgb(var(--panel) / <alpha-value>)",
+        accent: "rgb(var(--accent) / <alpha-value>)",
+        // `track` carries baked alpha — used as `bg-track` (no /X suffix).
+        track: "var(--track)",
+        // Legacy fixed background; kept for any inline style that hardcodes it.
         void: "#050510",
-        panel: "rgba(10, 14, 28, 0.75)",
+        // Status accents stay fixed across themes — they encode meaning,
+        // not chrome.
         holo: {
           cyan: "#66ccff",
           amber: "#ffbb44",

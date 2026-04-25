@@ -2,10 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* --- theme tokens ----------------------------------------------------- */
+:root {
+  --bg: 5 5 16;            /* #050510 */
+  --fg: 231 236 243;       /* #e7ecf3 */
+  --panel: 10 14 28;       /* dark panel */
+  --accent: 102 204 255;   /* cyan */
+  /* `track` is a subtle inset (groove) — baked alpha varies per theme so
+     density reads correctly on both backgrounds. */
+  --track: rgb(0 0 0 / 0.45);
+  --panel-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+}
+:root[data-theme="light"] {
+  --bg: 246 248 252;       /* #f6f8fc */
+  --fg: 10 18 36;          /* #0a1224 */
+  --panel: 255 255 255;    /* white */
+  --accent: 20 80 140;     /* navy */
+  --track: rgb(0 0 0 / 0.06);
+  /* Lighter, tighter shadow for paper-on-paper feel; 35% black is opaque
+     and muddy on a white background. */
+  --panel-shadow: 0 4px 14px rgb(15 23 42 / 0.08), 0 1px 3px rgb(15 23 42 / 0.06);
+}
+
 html,
 body {
-  background: #050510;
-  color: #e7ecf3;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
   font-family:
     "SF Mono", "Geist Mono", ui-monospace, monospace;
   -webkit-font-smoothing: antialiased;
@@ -13,36 +35,36 @@ body {
 
 body {
   background-image:
-    radial-gradient(circle at 20% 20%, rgba(102, 204, 255, 0.06), transparent 40%),
-    radial-gradient(circle at 80% 70%, rgba(180, 140, 255, 0.05), transparent 45%);
+    radial-gradient(circle at 20% 20%, rgb(var(--accent) / 0.06), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgb(180 140 255 / 0.05), transparent 45%);
   min-height: 100vh;
 }
 
 .glass {
-  background: rgba(10, 14, 28, 0.75);
+  background: rgb(var(--panel) / 0.75);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(102, 204, 255, 0.15);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgb(var(--accent) / 0.15);
+  box-shadow: var(--panel-shadow);
 }
 
 .hex-grid {
   background-image:
-    linear-gradient(rgba(102, 204, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(102, 204, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgb(var(--accent) / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--accent) / 0.04) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 
 input,
 textarea,
 select {
-  background: rgba(5, 10, 24, 0.8);
-  border: 1px solid rgba(102, 204, 255, 0.2);
-  color: #e7ecf3;
+  background: rgb(var(--bg) / 0.8);
+  border: 1px solid rgb(var(--accent) / 0.2);
+  color: rgb(var(--fg));
 }
 input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: rgba(102, 204, 255, 0.7);
-  box-shadow: 0 0 0 2px rgba(102, 204, 255, 0.15);
+  border-color: rgb(var(--accent) / 0.7);
+  box-shadow: 0 0 0 2px rgb(var(--accent) / 0.15);
 }

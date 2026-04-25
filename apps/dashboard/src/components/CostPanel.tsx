@@ -23,23 +23,23 @@ export default function CostPanel({ sessions }: { sessions: SessionRecord[] }) {
           ${total.toFixed(4)}
         </span>
       </div>
-      <div className="mb-3 text-[10px] text-white/40">
+      <div className="mb-3 text-[10px] text-fg/40">
         estimate = est. tokens × node price/1K. replace with real token counts later.
       </div>
       <div className="space-y-1">
         {Object.entries(byBackend).map(([backend, agg]) => (
           <div
             key={backend}
-            className="flex items-center justify-between border-b border-white/5 py-1"
+            className="flex items-center justify-between border-b border-fg/5 py-1"
           >
-            <span className="text-white/70">{backend}</span>
-            <span className="text-white/60">
+            <span className="text-fg/70">{backend}</span>
+            <span className="text-fg/60">
               {agg.count} × &nbsp; <span className="text-holo-green">${agg.cost.toFixed(4)}</span>
             </span>
           </div>
         ))}
         {sessions.length === 0 && (
-          <div className="text-white/40">no requests yet</div>
+          <div className="text-fg/40">no requests yet</div>
         )}
       </div>
     </div>

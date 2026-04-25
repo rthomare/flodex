@@ -46,6 +46,50 @@ pub struct NodeInfo {
     pub backends: Vec<BackendType>,
 }
 
+/// Lifecycle status of a single conversation / session on the node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "kebab-case")]
+pub enum RequestStatus {
+    Running,
+    WaitingTool,
+    Final,
+    Error,
+}
+
+/// Per-session record the node keeps so observers (dashboards) can visualize
+/// who's doing what. Completed records linger in the log for a short window so
+/// fast requests aren't missed by polling dashboards.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct RequestRecord {
+    pub session_id: String,
+    pub backend: BackendType,
+    // ts-rs maps i64 to `bigint` by default, but serde emits these as plain
+    // JSON numbers — override so TS sees `number` and matches runtime.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
+    #[ts(type = "number")]
+    pub last_update_ms: i64,
+    /// None while in-flight. Set when the request reaches Final or Error.
+    #[ts(type = "number | null")]
+    pub ended_at_ms: Option<i64>,
+    pub status: RequestStatus,
+    /// Number of `/execute` round trips seen for this session so far.
+    pub step_count: u32,
+    pub last_tool_name: Option<String>,
+}
+
+/// Published by `GET /activity`. Contains all in-flight sessions plus recently
+/// completed ones (retained briefly so fast requests stay visible to pollers).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct NodeActivityReport {
+    pub requests: Vec<RequestRecord>,
+}
+
 /// Plaintext payload the client sends to the node (encrypted on the wire).
 /// Either an initial prompt, or the result of a previously-requested client-side tool call.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

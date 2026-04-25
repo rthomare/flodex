@@ -15,10 +15,12 @@ use crypto::{decrypt, derive_key, encrypt, NodeKeys};
 use execution::{ExecutionBackend, LocalLlmBackend, MockTeeBackend};
 use local_llm::{default_cache_dir, resolve, LlamaServer, ModelSpec, OpenAiProvider};
 use protocol::{
-    AgentStep, BackendPrice, BackendType, EncryptedRequest, EncryptedResponse, NodeHeartbeat,
-    NodeInfo, NodeRegistration,
+    AgentResponse, AgentStep, BackendPrice, BackendType, EncryptedRequest, EncryptedResponse,
+    NodeActivityReport, NodeHeartbeat, NodeInfo, NodeRegistration, RequestRecord, RequestStatus,
 };
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -36,6 +38,121 @@ struct AppState {
     local_llm: Option<LocalLlmBackend>,
     /// Held for lifetime — dropping it kills the child `llama-server`.
     _llama_server: Option<LlamaServer>,
+    /// Per-session lifecycle log. Read via `/activity` so dashboards can show
+    /// which sessions are in flight, their elapsed time, tool calls, etc.,
+    /// regardless of who initiated the request.
+    activity: Arc<ActivityLog>,
+}
+
+const ACTIVITY_RETENTION_MS: i64 = 30_000;
+
+/// Per-session lifecycle log. Retains completed records briefly so polling
+/// dashboards don't miss fast-completing requests.
+struct ActivityLog {
+    records: Mutex<HashMap<String, RequestRecord>>,
+}
+
+impl ActivityLog {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Called when a new `/execute` step starts. Creates a new record on first
+    /// call for this session id; otherwise bumps `step_count`, marks Running,
+    /// and clears any prior `ended_at_ms` (re-opens after a WaitingTool step).
+    fn begin_step(&self, session_id: &str, backend: BackendType) {
+        let now = now_ms();
+        let mut map = self.records.lock().unwrap();
+        let entry = map.entry(session_id.to_string()).or_insert_with(|| RequestRecord {
+            session_id: session_id.to_string(),
+            backend,
+            started_at_ms: now,
+            last_update_ms: now,
+            ended_at_ms: None,
+            status: RequestStatus::Running,
+            step_count: 0,
+            last_tool_name: None,
+        });
+        entry.step_count = entry.step_count.saturating_add(1);
+        entry.last_update_ms = now;
+        entry.status = RequestStatus::Running;
+        entry.ended_at_ms = None;
+    }
+
+    fn end_step(
+        &self,
+        session_id: &str,
+        status: RequestStatus,
+        tool_name: Option<String>,
+    ) {
+        let now = now_ms();
+        let mut map = self.records.lock().unwrap();
+        let Some(entry) = map.get_mut(session_id) else {
+            return;
+        };
+        entry.last_update_ms = now;
+        entry.status = status;
+        if tool_name.is_some() {
+            entry.last_tool_name = tool_name;
+        }
+        if matches!(status, RequestStatus::Final | RequestStatus::Error) {
+            entry.ended_at_ms = Some(now);
+        } else {
+            entry.ended_at_ms = None;
+        }
+    }
+
+    fn snapshot(&self) -> Vec<RequestRecord> {
+        let now = now_ms();
+        let mut map = self.records.lock().unwrap();
+        map.retain(|_, r| match r.ended_at_ms {
+            None => true,
+            Some(end) => now - end < ACTIVITY_RETENTION_MS,
+        });
+        map.values().cloned().collect()
+    }
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// RAII: ensures a step is always resolved even on panic/early return.
+/// Call `.resolve(status, tool)` on the happy path; otherwise Drop marks Error.
+struct StepGuard<'a> {
+    log: &'a ActivityLog,
+    session_id: String,
+    resolved: bool,
+}
+
+impl<'a> StepGuard<'a> {
+    fn new(log: &'a ActivityLog, session_id: String, backend: BackendType) -> Self {
+        log.begin_step(&session_id, backend);
+        Self {
+            log,
+            session_id,
+            resolved: false,
+        }
+    }
+
+    fn resolve(mut self, status: RequestStatus, tool_name: Option<String>) {
+        self.log.end_step(&self.session_id, status, tool_name);
+        self.resolved = true;
+    }
+}
+
+impl Drop for StepGuard<'_> {
+    fn drop(&mut self) {
+        if !self.resolved {
+            self.log
+                .end_step(&self.session_id, RequestStatus::Error, None);
+        }
+    }
 }
 
 #[tokio::main]
@@ -61,6 +178,7 @@ async fn main() -> Result<()> {
         mock_tee,
         local_llm,
         _llama_server: llama_server,
+        activity: Arc::new(ActivityLog::new()),
     });
 
     let mut backends: Vec<BackendType> = Vec::new();
@@ -78,6 +196,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/info", get(info))
+        .route("/activity", get(activity))
         .route("/execute", post(execute))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -208,6 +327,12 @@ async fn init_backends() -> Result<(Option<MockTeeBackend>, Option<LocalLlmBacke
     Ok((mock_tee, local_llm, llama_server))
 }
 
+async fn activity(State(state): State<Arc<AppState>>) -> Json<NodeActivityReport> {
+    Json(NodeActivityReport {
+        requests: state.activity.snapshot(),
+    })
+}
+
 async fn info(State(state): State<Arc<AppState>>) -> Json<NodeInfo> {
     let mut backends = Vec::new();
     if state.mock_tee.is_some() {
@@ -226,6 +351,9 @@ async fn execute(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EncryptedRequest>,
 ) -> Result<Json<EncryptedResponse>, ApiError> {
+    // Guard is held through the whole step; on normal completion we call
+    // `.resolve(...)`; on early return / panic, Drop marks the session Errored.
+    let guard = StepGuard::new(&state.activity, req.session_id.clone(), req.backend);
     let client_pub = decode_client_pub(&req.client_public_key)?;
     let shared = state.keys.shared_secret(&client_pub);
     let key = derive_key(&shared, &req.session_id);
@@ -265,13 +393,23 @@ async fn execute(
         .await
         .map_err(|e| ApiError::Internal(format!("backend step: {e}")))?;
 
+    let (status, tool_name) = match &agent_response {
+        AgentResponse::Final { .. } => (RequestStatus::Final, None),
+        AgentResponse::ToolCall { name, .. } => {
+            (RequestStatus::WaitingTool, Some(name.clone()))
+        }
+    };
+
     let resp_bytes = serde_json::to_vec(&agent_response)
         .map_err(|e| ApiError::Internal(format!("serialize response: {e}")))?;
     let (resp_nonce, resp_ct) =
         encrypt(&key, &resp_bytes).map_err(|e| ApiError::Internal(format!("encrypt: {e}")))?;
 
+    let session_id = req.session_id;
+    guard.resolve(status, tool_name);
+
     Ok(Json(EncryptedResponse {
-        session_id: req.session_id,
+        session_id,
         nonce: B64.encode(resp_nonce),
         ciphertext: B64.encode(resp_ct),
     }))

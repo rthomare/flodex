@@ -8,11 +8,17 @@ import {
 } from "@flodex/client-lib";
 import type { BackendType, NodeRegistration } from "@flodex/protocol";
 import { useNodes } from "@/hooks/useNodes";
-import { makeSession, type SessionRecord } from "@/lib/events";
-import NodeGraph from "./NodeGraph";
+import {
+  useNodeActivity,
+  type NodeActivityEntry,
+} from "@/hooks/useNodeActivity";
+import { useTheme } from "@/hooks/useTheme";
+import { makeLocalSession, type SessionRecord } from "@/lib/events";
+import NodeGraph, { type ActiveRequest } from "./NodeGraph";
 import RequestForm from "./RequestForm";
 import Timeline from "./Timeline";
 import CostPanel from "./CostPanel";
+import SessionDetail from "./SessionDetail";
 
 // In-browser tool handlers. Local-fs tools don't work from a browser tab,
 // so we surface a clear error back to the node and carry on.
@@ -27,38 +33,44 @@ const browserTools: ToolHandlerMap = {
 };
 
 export default function Dashboard() {
-  const [coordinatorUrl, setCoordinatorUrl] = useState(
-    "http://127.0.0.1:8000",
-  );
+  const [coordinatorUrl, setCoordinatorUrl] = useState("http://127.0.0.1:8000");
+  const { theme, toggle: toggleTheme } = useTheme();
   const { nodes, error: nodesError } = useNodes(coordinatorUrl);
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const activityEntries = useNodeActivity(nodes);
+
+  const [localSessions, setLocalSessions] = useState<SessionRecord[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedPubKey, setSelectedPubKey] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [sending, setSending] = useState(false);
 
-  // Tick for timeline bars to track "still running" sessions.
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 250);
+    const id = window.setInterval(() => setNow(Date.now()), 200);
     return () => window.clearInterval(id);
   }, []);
 
-  const activeNodeUrls = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of sessions) {
-      if (s.nodeUrl && (s.status === "running" || s.status === "waiting-tool")) {
-        set.add(s.nodeUrl);
-      }
-    }
-    return set;
-  }, [sessions]);
+  const sessions = useMemo(
+    () => mergeSessions(localSessions, activityEntries),
+    [localSessions, activityEntries],
+  );
+
+  const activeRequests = useMemo<ActiveRequest[]>(
+    () => sessionsToActiveRequests(sessions, now),
+    [sessions, now],
+  );
+
+  const selectedSession = useMemo(
+    () => sessions.find((s) => s.sessionId === selectedSessionId) ?? null,
+    [sessions, selectedSessionId],
+  );
 
   const selectedNode = useMemo<NodeRegistration | null>(
     () => nodes.find((n) => n.publicKey === selectedPubKey) ?? null,
     [nodes, selectedPubKey],
   );
 
-  function patch(sessionId: string, fn: (s: SessionRecord) => SessionRecord) {
-    setSessions((prev) =>
+  function patchLocal(sessionId: string, fn: (s: SessionRecord) => SessionRecord) {
+    setLocalSessions((prev) =>
       prev.map((s) => (s.sessionId === sessionId ? fn(s) : s)),
     );
   }
@@ -70,7 +82,7 @@ export default function Dashboard() {
     maxPricePer1k: number;
   }) {
     const sessionId = crypto.randomUUID();
-    const record = makeSession({
+    const record = makeLocalSession({
       sessionId,
       backend: args.backend,
       prompt: args.prompt,
@@ -78,7 +90,8 @@ export default function Dashboard() {
       pricePer1k: 0,
     });
     record.status = "matching";
-    setSessions((prev) => [record, ...prev]);
+    setLocalSessions((prev) => [record, ...prev]);
+    setSelectedSessionId(sessionId);
     setSending(true);
 
     try {
@@ -90,9 +103,10 @@ export default function Dashboard() {
 
       const matchedNode = nodes.find((n) => n.publicKey === match.publicKey);
       const pricePer1k =
-        matchedNode?.pricing.find((p) => p.backend === args.backend)?.pricePer1k ?? 0;
+        matchedNode?.pricing.find((p) => p.backend === args.backend)?.pricePer1k ??
+        0;
 
-      patch(sessionId, (s) => ({
+      patchLocal(sessionId, (s) => ({
         ...s,
         status: "running",
         nodeUrl: match.url,
@@ -108,49 +122,56 @@ export default function Dashboard() {
         prompt: args.prompt,
         tools: browserTools,
         onEvent: (ev) => {
+          const t = Date.now();
           if (ev.kind === "toolCallStart") {
-            patch(sessionId, (s) => ({
+            patchLocal(sessionId, (s) => ({
               ...s,
               status: "waiting-tool",
+              lastToolName: ev.name,
+              lastUpdate: t,
               toolCalls: [
                 ...s.toolCalls,
-                {
-                  name: ev.name,
-                  startedAt: Date.now(),
-                  endedAt: null,
-                  isError: false,
-                },
+                { name: ev.name, startedAt: t, endedAt: null, isError: false },
               ],
             }));
           } else if (ev.kind === "toolCallEnd") {
-            patch(sessionId, (s) => ({
+            patchLocal(sessionId, (s) => ({
               ...s,
               status: "running",
+              lastUpdate: t,
               toolCalls: s.toolCalls.map((tc, i, arr) =>
                 i === arr.length - 1
-                  ? { ...tc, endedAt: Date.now(), isError: ev.isError }
+                  ? { ...tc, endedAt: t, isError: ev.isError }
                   : tc,
               ),
             }));
           } else if (ev.kind === "final") {
-            patch(sessionId, (s) => ({
+            patchLocal(sessionId, (s) => ({
               ...s,
               status: "final",
               finalContent: ev.content,
-              endedAt: Date.now(),
+              endedAt: t,
+              lastUpdate: t,
             }));
           } else if (ev.kind === "error") {
-            patch(sessionId, (s) => ({
+            patchLocal(sessionId, (s) => ({
               ...s,
               status: "error",
               errorMessage: ev.message,
-              endedAt: Date.now(),
+              endedAt: t,
+              lastUpdate: t,
+            }));
+          } else if (ev.kind === "response") {
+            patchLocal(sessionId, (s) => ({
+              ...s,
+              stepCount: s.stepCount + 1,
+              lastUpdate: t,
             }));
           }
         },
       });
     } catch (e) {
-      patch(sessionId, (s) => ({
+      patchLocal(sessionId, (s) => ({
         ...s,
         status: "error",
         errorMessage: e instanceof Error ? e.message : String(e),
@@ -168,20 +189,26 @@ export default function Dashboard() {
           <div className="text-xs uppercase tracking-widest text-holo-cyan">
             flodex
           </div>
-          <div className="text-sm text-white/70">
+          <div className="text-sm text-fg/70">
             {nodes.length} node{nodes.length === 1 ? "" : "s"} registered
-            {nodesError && (
-              <span className="ml-2 text-holo-red">· {nodesError}</span>
-            )}
+            {nodesError && <span className="ml-2 text-holo-red">· {nodesError}</span>}
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs">
-          <label className="text-white/50">coordinator</label>
+          <label className="text-fg/50">coordinator</label>
           <input
             value={coordinatorUrl}
             onChange={(e) => setCoordinatorUrl(e.target.value)}
             className="w-64 rounded px-2 py-1"
           />
+          <button
+            type="button"
+            onClick={toggleTheme}
+            title={`switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            className="rounded border border-holo-cyan/40 bg-track px-2 py-1 text-[10px] uppercase tracking-widest text-holo-cyan transition hover:bg-holo-cyan/10"
+          >
+            {theme === "dark" ? "☾ dark" : "☀ light"}
+          </button>
         </div>
       </header>
 
@@ -189,27 +216,35 @@ export default function Dashboard() {
         <aside className="col-span-3 flex flex-col gap-3 overflow-y-auto">
           <RequestForm nodes={nodes} onSend={handleSend} disabled={sending} />
           {selectedNode && (
-            <NodeDetail node={selectedNode} onClose={() => setSelectedPubKey(null)} />
+            <NodeDetail
+              node={selectedNode}
+              onClose={() => setSelectedPubKey(null)}
+            />
           )}
         </aside>
 
         <section className="col-span-6 min-h-0">
           <NodeGraph
             nodes={nodes}
-            activeNodeUrls={activeNodeUrls}
+            activeRequests={activeRequests}
             selectedPubKey={selectedPubKey}
             onSelect={setSelectedPubKey}
+            theme={theme}
           />
         </section>
 
         <aside className="col-span-3 flex flex-col gap-3 overflow-hidden">
           <CostPanel sessions={sessions} />
-          <LatestFinal sessions={sessions} />
+          <SessionDetail session={selectedSession} />
         </aside>
       </div>
 
-      <div className="h-56">
-        <Timeline sessions={sessions} now={now} />
+      <div className="h-12">
+        <Timeline
+          sessions={sessions}
+          selectedSessionId={selectedSessionId}
+          onSelect={setSelectedSessionId}
+        />
       </div>
     </main>
   );
@@ -229,7 +264,7 @@ function NodeDetail({
         <button
           type="button"
           onClick={onClose}
-          className="text-white/40 hover:text-white"
+          className="text-fg/40 hover:text-white"
         >
           ×
         </button>
@@ -238,8 +273,8 @@ function NodeDetail({
       <Row label="url" value={node.url} />
       <Row label="backends" value={node.backends.join(", ")} />
       <Row label="max tokens" value={node.maxTokens.toLocaleString()} />
-      <div className="mt-2 border-t border-white/10 pt-2">
-        <div className="mb-1 text-white/50">pricing ($/1K)</div>
+      <div className="mt-2 border-t border-fg/10 pt-2">
+        <div className="mb-1 text-fg/50">pricing ($/1K)</div>
         {node.pricing.map((p) => (
           <Row key={p.backend} label={p.backend} value={p.pricePer1k.toFixed(4)} />
         ))}
@@ -251,33 +286,82 @@ function NodeDetail({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between py-0.5">
-      <span className="text-white/50">{label}</span>
-      <span className="text-white/80">{value}</span>
+      <span className="text-fg/50">{label}</span>
+      <span className="text-fg/80">{value}</span>
     </div>
   );
 }
 
-function LatestFinal({ sessions }: { sessions: SessionRecord[] }) {
-  const latestFinal = sessions.find((s) => s.status === "final");
-  if (!latestFinal) {
-    return (
-      <div className="glass rounded-xl p-4 text-xs text-white/40">
-        latest response — none yet
-      </div>
-    );
+/**
+ * Merge local dashboard-initiated sessions with node-reported activity
+ * entries. Local sessions take precedence (they have prompt + response text);
+ * remote entries fill in sessions we didn't initiate.
+ */
+function mergeSessions(
+  local: SessionRecord[],
+  activity: NodeActivityEntry[],
+): SessionRecord[] {
+  const bySession = new Map<string, SessionRecord>();
+  for (const s of local) bySession.set(s.sessionId, s);
+
+  for (const { nodeUrl, record } of activity) {
+    const existing = bySession.get(record.sessionId);
+    if (existing) {
+      // Merge node's authoritative timing + status into our local session
+      bySession.set(record.sessionId, {
+        ...existing,
+        nodeUrl: existing.nodeUrl ?? nodeUrl,
+        stepCount: Math.max(existing.stepCount, record.stepCount),
+        lastToolName: record.lastToolName ?? existing.lastToolName,
+        lastUpdate: Math.max(existing.lastUpdate, record.lastUpdateMs),
+        endedAt:
+          record.endedAtMs !== null
+            ? (existing.endedAt ?? record.endedAtMs)
+            : existing.endedAt,
+      });
+    } else {
+      bySession.set(record.sessionId, {
+        sessionId: record.sessionId,
+        source: "remote",
+        backend: record.backend,
+        nodeUrl,
+        startedAt: record.startedAtMs,
+        endedAt: record.endedAtMs,
+        lastUpdate: record.lastUpdateMs,
+        status: record.status,
+        stepCount: record.stepCount,
+        toolCalls: [],
+        lastToolName: record.lastToolName ?? undefined,
+        estimatedTokens: 0,
+        pricePer1k: 0,
+      });
+    }
   }
-  return (
-    <div className="glass flex-1 overflow-y-auto rounded-xl p-4 text-xs">
-      <div className="mb-2 flex items-center justify-between uppercase tracking-widest text-holo-cyan">
-        <span>latest response</span>
-        <span className="text-[10px] text-white/40 normal-case tracking-normal">
-          {latestFinal.backend}
-        </span>
-      </div>
-      <div className="mb-2 text-white/50">→ {latestFinal.prompt}</div>
-      <div className="whitespace-pre-wrap text-white/90">
-        {latestFinal.finalContent}
-      </div>
-    </div>
-  );
+
+  return Array.from(bySession.values()).sort((a, b) => b.startedAt - a.startedAt);
+}
+
+function sessionsToActiveRequests(
+  sessions: SessionRecord[],
+  now: number,
+): ActiveRequest[] {
+  const out: ActiveRequest[] = [];
+  for (const s of sessions) {
+    if (!s.nodeUrl) continue;
+    // Render a ball if in-flight OR if completed within the last 1.5s
+    // (so the ball snaps to the node + fades instead of vanishing).
+    const endedRecently = s.endedAt !== null && now - s.endedAt < 1500;
+    if (s.endedAt !== null && !endedRecently) continue;
+    out.push({
+      nodeUrl: s.nodeUrl,
+      sessionId: s.sessionId,
+      backend: s.backend,
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      status: s.status,
+      lastToolName: s.lastToolName,
+      source: s.source,
+    });
+  }
+  return out;
 }

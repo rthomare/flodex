@@ -19,16 +19,23 @@ export default function RequestForm({
   const availableBackends = Array.from(
     new Set(nodes.flatMap((n) => n.backends)),
   );
-  const [backend, setBackend] = useState<BackendType>(
-    (availableBackends[0] ?? "mock-tee") as BackendType,
-  );
-  const [prompt, setPrompt] = useState("What time is it?");
-  const [estimatedTokens, setEstimatedTokens] = useState(4000);
-  const [maxPricePer1k, setMaxPricePer1k] = useState(1.0);
-
   const backendOptions: BackendType[] = (
     availableBackends.length > 0 ? availableBackends : ["mock-tee"]
   ) as BackendType[];
+
+  // `chosenBackend` tracks the user's explicit selection. Until they pick (or
+  // if their pick is no longer offered by any registered node), we fall back
+  // to the first available option. Without this, the form would silently send
+  // a stale default that the controlled <select> can't visually represent.
+  const [chosenBackend, setChosenBackend] = useState<BackendType | null>(null);
+  const backend: BackendType =
+    chosenBackend && backendOptions.includes(chosenBackend)
+      ? chosenBackend
+      : backendOptions[0];
+
+  const [prompt, setPrompt] = useState("What time is it?");
+  const [estimatedTokens, setEstimatedTokens] = useState(4000);
+  const [maxPricePer1k, setMaxPricePer1k] = useState(1.0);
 
   return (
     <div className="glass rounded-xl p-4 text-sm">
@@ -36,10 +43,10 @@ export default function RequestForm({
         new request
       </div>
       <div className="mb-3 flex items-center gap-3">
-        <label className="w-24 text-xs text-white/60">backend</label>
+        <label className="w-24 text-xs text-fg/60">backend</label>
         <select
           value={backend}
-          onChange={(e) => setBackend(e.target.value as BackendType)}
+          onChange={(e) => setChosenBackend(e.target.value as BackendType)}
           disabled={disabled}
           className="flex-1 rounded px-2 py-1 text-xs"
         >
@@ -51,7 +58,7 @@ export default function RequestForm({
         </select>
       </div>
       <div className="mb-3">
-        <label className="mb-1 block text-xs text-white/60">prompt</label>
+        <label className="mb-1 block text-xs text-fg/60">prompt</label>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -61,7 +68,7 @@ export default function RequestForm({
         />
       </div>
       <div className="mb-3 flex items-center gap-3">
-        <label className="w-24 text-xs text-white/60">est. tokens</label>
+        <label className="w-24 text-xs text-fg/60">est. tokens</label>
         <input
           type="number"
           min={100}
@@ -73,7 +80,7 @@ export default function RequestForm({
         />
       </div>
       <div className="mb-4 flex items-center gap-3">
-        <label className="w-24 text-xs text-white/60">max $/1K</label>
+        <label className="w-24 text-xs text-fg/60">max $/1K</label>
         <input
           type="number"
           step={0.001}
@@ -94,7 +101,7 @@ export default function RequestForm({
       >
         {disabled ? "running…" : "send →"}
       </button>
-      <p className="mt-2 text-[10px] leading-snug text-white/40">
+      <p className="mt-2 text-[10px] leading-snug text-fg/40">
         client-side tools (e.g. <code>read_local_file</code>) run via the CLI only —
         the dashboard returns "unsupported" to the node if one is requested.
       </p>
