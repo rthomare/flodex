@@ -17,6 +17,77 @@ See `CLAUDE.md` for the full design brief, target architecture, and v0 scope.
 
 ---
 
+## Demo network
+
+A live demo network runs on Base Sepolia + Fly.io. You can run a node against
+it from your laptop in a few minutes (see [Onboarding](#onboarding)).
+
+| Component         | Where                                                             |
+| ----------------- | ----------------------------------------------------------------- |
+| Coordinator       | `https://flodex-dry-sun-2419.fly.dev`                             |
+| NodeRegistry      | [`0xf52b8f75…7A51C`](https://sepolia.basescan.org/address/0xf52b8f75eed06E61801D5251022FD052aa97A51C) on Base Sepolia |
+| JobEscrow         | [`0xEb577b58…D4894`](https://sepolia.basescan.org/address/0xEb577b58913Ad50C3203fFdD21a4EB28C46D4894) on Base Sepolia |
+| Stake/payment token | Circle testnet USDC (`0x036C…CF7e`)                              |
+
+The off-chain coordinator and the on-chain registry coexist: nodes register
+off-chain to participate in the dashboard's discovery layer, and on-chain
+once the node opts into the escrow flow (not yet wired). On-chain identity
+is the secp256k1 keypair the node persists at `~/.flodex/node/identity.json`,
+same key in both places.
+
+---
+
+## Onboarding
+
+### Run a node against the demo network
+
+```bash
+# 1. Build the node binary
+cargo build --release -p node
+
+# 2. Pick a backend. Either `mock-tee` (set ANTHROPIC_API_KEY) or `local`
+#    (set FLODEX_LLAMA_MODEL — see "Backends" below).
+
+# 3. Register against the hosted coordinator
+ANTHROPIC_API_KEY=sk-ant-... \
+FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
+./target/release/flodex-node
+```
+
+The first run generates a persistent identity at
+`~/.flodex/node/identity.json`. Same identity (same secp256k1 pubkey) every
+restart. Heartbeats every 10s. Watch the coordinator log it joining at
+`curl https://flodex-dry-sun-2419.fly.dev/nodes`.
+
+### Send a request through the demo network
+
+```bash
+bun install
+bun run apps/client/src/index.ts \
+  --coordinator https://flodex-dry-sun-2419.fly.dev \
+  -b mock-tee \
+  send "What time is it? And summarize https://example.com."
+```
+
+The client matches against any registered node (yours, or someone else's
+volunteered for the demo). End-to-end encrypted to whichever node it picks.
+
+### Get testnet funds (for the on-chain layer)
+
+The contracts only matter once you start opening real escrow sessions —
+which isn't wired into the CLI yet. When that lands you'll need:
+
+| Asset              | Faucet                                                                    |
+| ------------------ | ------------------------------------------------------------------------- |
+| Base Sepolia ETH   | https://www.alchemy.com/faucets/base-sepolia                              |
+| Base Sepolia USDC  | https://faucet.circle.com (pick "Base Sepolia")                           |
+
+Same wallet for both. ~0.05 Sepolia ETH covers gas for register + several
+sessions; 100 USDC covers the registry's minimum stake.
+
+---
+
 ## Architecture at a glance
 
 ```
@@ -271,8 +342,11 @@ Node:
 1. Derives the same symmetric key using its static secret.
 2. Decrypts, runs the agent step, re-encrypts with a fresh nonce.
 
-The node's keypair is ephemeral per process run in v0 — persist it when you
-need stable node identity across restarts.
+The node persists both keypairs (X25519 ECDH + secp256k1 identity) at
+`~/.flodex/node/identity.json` (override via `FLODEX_NODE_IDENTITY_PATH`) so
+node identity is stable across restarts. Registrations and heartbeats are
+ECDSA-signed; the coordinator verifies the signature before storing or
+refreshing the entry.
 
 ---
 
@@ -355,18 +429,25 @@ Flags: `-n/--node`, `-b/--backend`, `--coordinator`, `--max-tokens`, `--max-pric
 ├── package.json               # Bun workspaces root
 ├── CLAUDE.md                  # Design brief + target architecture
 ├── README.md                  # This file
+├── fly.toml                   # Fly.io config for the hosted coordinator
 ├── apps/
 │   ├── client/                # TS CLI
-│   ├── coordinator/           # Rust axum registry
+│   ├── coordinator/           # Rust axum registry (+ Dockerfile for Fly)
 │   ├── dashboard/             # Next.js visualization
-│   └── node/                  # Rust axum node
+│   ├── node/                  # Rust axum node
+│   └── proxy/                 # Anthropic-compatible proxy for Claude Code
 ├── crates/
 │   ├── agent/                 # Agent loop + ChatProvider + Anthropic client
-│   ├── crypto/                # X25519 + XChaCha20-Poly1305
+│   ├── crypto/                # X25519 ECDH + XChaCha20-Poly1305 + secp256k1 identity
 │   ├── execution/             # Backend trait + MockTee + LocalLlm
 │   ├── local_llm/             # HF download + llama-server supervisor + OpenAI-compat
-│   └── protocol/              # Shared wire types (Rust source of truth)
+│   └── protocol/              # Shared wire types (Rust source of truth) + canonical signing payloads
+├── contracts/
+│   ├── src/                   # NodeRegistry.sol + JobEscrow.sol
+│   ├── test/                  # Forge tests + MockUSDC
+│   └── script/                # Deploy.s.sol
 └── packages/
+    ├── chains/                # Per-chain addresses (USDC, registry, escrow) shared by TS consumers
     ├── flodex-client/         # Shared TS transport (CLI + dashboard)
     └── protocol/              # Re-exports ts-rs-generated types
 ```
@@ -407,22 +488,22 @@ those pins in `Cargo.lock`.
 
 ## Security notes for v0
 
-- **Node keypair is ephemeral** — regenerated every process start. Fine for
-  local dev; persist to disk before relying on stable node identity.
 - **macOS sandbox is narrow** — only blocks outbound network from the
   llama-server child. Read-only FS + no-exec would be stricter; tracked.
 - **No Linux/Windows sandbox yet** — `llama-server` runs with the node
   operator's permissions. Don't point it at a model you don't trust.
-- **`CorsLayer::permissive()` on both axum servers** — fine for localhost
-  dev, definitely not for exposed deployments.
-- **Coordinator has no auth** — anyone who can reach it can register a node or
-  claim a job. Add HMAC-signed registrations / a signature chain before opening
-  it up.
+- **`CorsLayer::permissive()` on both axum servers** — fine for the demo
+  network so dashboards from arbitrary origins can poll, but a real
+  deployment should narrow this.
+- **Heartbeats are not rate-limited** on the coordinator; signed but cheap to
+  spam. Add per-identity caps before scaling.
 - **No replay protection** on encrypted requests beyond nonce uniqueness per
   session. Sessions are keyed only on `sessionId` (a UUID the client chooses).
 - **`web_fetch` has minimal SSRF protection** — blocks obvious loopback hosts,
   but a curious DNS name resolving to a private IP bypasses it. Acceptable for
   dev; harden before opening exposure.
+- **Identity-file permissions** are best-effort 0600 on Unix only. Windows
+  users should secure the file manually.
 
 ---
 
@@ -438,14 +519,18 @@ those pins in `Cargo.lock`.
 
 **Beyond M5**
 
+- ✅ Real token usage piped into `AgentEvent` (replaces cost estimate)
+- ✅ Persisted node keypairs + signed coordinator registrations
+- ✅ NodeRegistry + JobEscrow contracts on Base Sepolia
+- ✅ Hosted demo coordinator on Fly + dashboard wired to read on-chain state
+- Node calls `registry.register()` on-chain (alloy integration; needs Rust 1.81+ MSRV bump)
+- Client opens real escrow sessions before sending requests (wallet connect + USDC approve flow)
 - Harden Linux/Windows sandboxing of `llama-server`
-- Real token usage piped into `AgentEvent` (replace cost estimate)
 - LocalStorage persistence for the dashboard event log
 - Tier-aware client-side routing (cheap sub-tasks → local, hard sub-tasks → frontier)
 - Commit-reveal or RFQ-style bidding on the coordinator
 - FHE backend via TFHE-rs (toy encrypted layer first; not end-to-end inference)
 - zkLLM research track (small-model inference proofs)
-- Persisted node keypairs + signed coordinator registrations
 
 ---
 

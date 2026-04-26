@@ -1,10 +1,10 @@
 # Rust
 /target
 **/*.rs.bk
+crates/
 
 # Node / Bun
 node_modules/
-bun.lockb
 *.log
 .DS_Store
 dist/

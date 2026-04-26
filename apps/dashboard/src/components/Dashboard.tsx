@@ -34,8 +34,14 @@ const browserTools: ToolHandlerMap = {
   },
 };
 
+// Default coordinator URL: env-configurable so the deployed dashboard points
+// at the hosted coordinator out-of-the-box, while local dev keeps targeting
+// localhost. Set `NEXT_PUBLIC_COORDINATOR_URL` at build time on Vercel.
+const DEFAULT_COORDINATOR_URL =
+  process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "http://127.0.0.1:8000";
+
 export default function Dashboard() {
-  const [coordinatorUrl, setCoordinatorUrl] = useState("http://127.0.0.1:8000");
+  const [coordinatorUrl, setCoordinatorUrl] = useState(DEFAULT_COORDINATOR_URL);
   const { theme, toggle: toggleTheme } = useTheme();
   const { nodes: rawNodes, error: nodesError } = useNodes(coordinatorUrl);
   const { entries: activityEntries, aliveUrls } = useNodeActivity(rawNodes);
