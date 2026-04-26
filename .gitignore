@@ -1,7 +1,6 @@
 # Rust
 /target
 **/*.rs.bk
-crates/
 
 # Node / Bun
 node_modules/
@@ -16,6 +15,4 @@ dist/
 *.swp
 
 .env
-
-
-
+.vercel
