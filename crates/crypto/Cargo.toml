@@ -12,3 +12,8 @@ sha2.workspace = true
 rand.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+hex = "0.4"
+# Pin transitive dep: base64ct >=1.7 requires edition-2024 (Rust 1.85+). The
+# rest of the workspace targets 1.74. Drop this once we bump.
+base64ct = "<1.7"

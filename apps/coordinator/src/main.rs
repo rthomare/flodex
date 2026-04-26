@@ -10,12 +10,15 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use crypto::verify_identity_signature;
 use dashmap::DashMap;
-use protocol::{JobMatch, JobSpec, NodeHeartbeat, NodeRegistration};
+use protocol::{
+    canonical_heartbeat_bytes, canonical_register_bytes, JobMatch, JobSpec, NodeHeartbeat,
+    NodeRegistration,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -54,10 +57,10 @@ async fn main() {
             loop {
                 tokio::time::sleep(GC_INTERVAL).await;
                 let now = Instant::now();
-                state.nodes.retain(|_pk, entry| {
+                state.nodes.retain(|id, entry| {
                     let alive = now.duration_since(entry.last_seen) < HEARTBEAT_TIMEOUT;
                     if !alive {
-                        tracing::info!(pubkey = %_pk, "expiring stale node");
+                        tracing::info!(identity = %id, "expiring stale node");
                     }
                     alive
                 });
@@ -83,36 +86,60 @@ async fn main() {
     axum::serve(listener, app).await.expect("serve");
 }
 
+/// Decode hex and verify the canonical-bytes ECDSA signature against the
+/// claimed identity_pubkey. Used by both `/nodes/register` and
+/// `/nodes/heartbeat`. Returns the decoded pubkey bytes on success.
+fn verify_signed(
+    identity_pubkey_hex: &str,
+    signature_hex: &str,
+    canonical: &[u8],
+) -> Result<Vec<u8>, (StatusCode, &'static str)> {
+    let pubkey = hex::decode(identity_pubkey_hex)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "identity_pubkey not hex"))?;
+    let signature = hex::decode(signature_hex)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "signature not hex"))?;
+    if !verify_identity_signature(&pubkey, canonical, &signature) {
+        return Err((StatusCode::UNAUTHORIZED, "invalid signature"));
+    }
+    Ok(pubkey)
+}
+
 async fn register(
     State(state): State<Arc<AppState>>,
     Json(reg): Json<NodeRegistration>,
-) -> impl IntoResponse {
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    let canonical = canonical_register_bytes(&reg);
+    verify_signed(&reg.identity_pubkey, &reg.signature, &canonical)?;
+
     tracing::info!(
-        pubkey = %reg.public_key,
+        identity = %reg.identity_pubkey,
         url = %reg.url,
         backends = ?reg.backends,
         "node registered"
     );
     state.nodes.insert(
-        reg.public_key.clone(),
+        reg.identity_pubkey.clone(),
         Entry {
             reg,
             last_seen: Instant::now(),
         },
     );
-    StatusCode::OK
+    Ok(StatusCode::OK)
 }
 
 async fn heartbeat(
     State(state): State<Arc<AppState>>,
     Json(hb): Json<NodeHeartbeat>,
-) -> impl IntoResponse {
-    match state.nodes.get_mut(&hb.public_key) {
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    let canonical = canonical_heartbeat_bytes(&hb);
+    verify_signed(&hb.identity_pubkey, &hb.signature, &canonical)?;
+
+    match state.nodes.get_mut(&hb.identity_pubkey) {
         Some(mut entry) => {
             entry.last_seen = Instant::now();
-            StatusCode::OK
+            Ok(StatusCode::OK)
         }
-        None => StatusCode::NOT_FOUND,
+        None => Err((StatusCode::NOT_FOUND, "unknown identity_pubkey")),
     }
 }
 

@@ -96,15 +96,19 @@ impl AgentRuntime {
         let outcome = self.agent.step(&mut session, agent_input).await?;
 
         Ok(match outcome {
-            AgentStepOutcome::Final(content) => AgentResponse::Final { content },
+            AgentStepOutcome::Final { content, usage } => {
+                AgentResponse::Final { content, usage }
+            }
             AgentStepOutcome::NeedsClientTool {
                 tool_use_id,
                 name,
                 input,
+                usage,
             } => AgentResponse::ToolCall {
                 tool_use_id,
                 name,
                 input,
+                usage,
             },
         })
     }

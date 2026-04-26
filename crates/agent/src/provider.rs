@@ -9,6 +9,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use protocol::Usage;
+
 #[async_trait]
 pub trait ChatProvider: Send + Sync {
     async fn complete(&self, req: ChatRequest) -> Result<ChatResult>;
@@ -29,14 +31,4 @@ pub struct ChatResult {
     pub content: Vec<Value>,
     pub stop_reason: String,
     pub usage: Usage,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Usage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_creation_input_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read_input_tokens: Option<u32>,
 }

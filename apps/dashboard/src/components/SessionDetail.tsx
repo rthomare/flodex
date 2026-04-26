@@ -1,5 +1,6 @@
 "use client";
 import type { SessionRecord } from "@/lib/events";
+import { sessionCost, totalTokens } from "@/lib/events";
 
 function humanDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
@@ -42,10 +43,23 @@ export default function SessionDetail({
       {session.lastToolName && (
         <Row label="last tool" value={session.lastToolName} />
       )}
-      {session.pricePer1k > 0 && (
+      {session.pricePer1k > 0 && (() => {
+        const { value, real } = sessionCost(session);
+        return (
+          <Row
+            label={real ? "cost" : "est. cost"}
+            value={`$${value.toFixed(4)}`}
+          />
+        );
+      })()}
+      {session.actualUsage && (
         <Row
-          label="est. cost"
-          value={`$${((session.estimatedTokens / 1000) * session.pricePer1k).toFixed(4)}`}
+          label="tokens"
+          value={`${totalTokens(session.actualUsage).toLocaleString()} (in ${session.actualUsage.inputTokens.toLocaleString()} / out ${session.actualUsage.outputTokens.toLocaleString()}${
+            session.actualUsage.cacheReadInputTokens
+              ? ` / cache ${session.actualUsage.cacheReadInputTokens.toLocaleString()}`
+              : ""
+          })`}
         />
       )}
 

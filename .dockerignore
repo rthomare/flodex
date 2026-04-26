@@ -1,0 +1,29 @@
+# Build artifacts
+target/
+**/target/
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+dist/
+**/dist/
+
+# Contracts (not needed for coordinator/node images)
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Local state
+.env
+.env.*
+*.log
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+
+# Git
+.git/
+.gitignore

@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 protocol.workspace = true
+crypto.workspace = true
 
 tokio.workspace = true
 axum.workspace = true
@@ -19,3 +20,4 @@ serde_json.workspace = true
 dashmap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+hex = "0.4"

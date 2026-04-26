@@ -13,12 +13,14 @@ import {
   type NodeActivityEntry,
 } from "@/hooks/useNodeActivity";
 import { useTheme } from "@/hooks/useTheme";
-import { makeLocalSession, type SessionRecord } from "@/lib/events";
+import { addUsage, makeLocalSession, type SessionRecord } from "@/lib/events";
 import NodeGraph, { type ActiveRequest } from "./NodeGraph";
 import RequestForm from "./RequestForm";
 import Timeline from "./Timeline";
 import CostPanel from "./CostPanel";
 import SessionDetail from "./SessionDetail";
+import OnChainStatus from "./OnChainStatus";
+import { DEFAULT_CHAIN_ID } from "@/lib/chain";
 
 // In-browser tool handlers. Local-fs tools don't work from a browser tab,
 // so we surface a clear error back to the node and carry on.
@@ -169,10 +171,12 @@ export default function Dashboard() {
               lastUpdate: t,
             }));
           } else if (ev.kind === "response") {
+            const usage = ev.response.usage;
             patchLocal(sessionId, (s) => ({
               ...s,
               stepCount: s.stepCount + 1,
               lastUpdate: t,
+              actualUsage: addUsage(s.actualUsage, usage),
             }));
           }
         },
@@ -241,6 +245,7 @@ export default function Dashboard() {
         </section>
 
         <aside className="col-span-3 flex flex-col gap-3 overflow-hidden">
+          <OnChainStatus chainId={DEFAULT_CHAIN_ID} />
           <CostPanel sessions={sessions} />
           <SessionDetail session={selectedSession} />
         </aside>
@@ -341,6 +346,7 @@ function mergeSessions(
         lastToolName: record.lastToolName ?? undefined,
         estimatedTokens: 0,
         pricePer1k: 0,
+        actualUsage: null,
       });
     }
   }

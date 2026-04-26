@@ -14,7 +14,8 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
 pub use anthropic::{AnthropicClient, AnthropicProvider};
-pub use provider::{ChatProvider, ChatRequest, ChatResult, Usage};
+pub use protocol::Usage;
+pub use provider::{ChatProvider, ChatRequest, ChatResult};
 pub use tools::{
     CurrentTimeTool, NodeTool, Tool, ToolDef, ToolRegistry, WebFetchTool, read_local_file_def,
 };
@@ -56,11 +57,15 @@ pub enum AgentStepInput {
 }
 
 pub enum AgentStepOutcome {
-    Final(String),
+    Final {
+        content: String,
+        usage: Usage,
+    },
     NeedsClientTool {
         tool_use_id: String,
         name: String,
         input: Value,
+        usage: Usage,
     },
 }
 
@@ -92,6 +97,11 @@ impl AgentLoop {
     ) -> Result<AgentStepOutcome> {
         session.messages.push(input_to_user_message(input));
 
+        // Accumulates token usage across all provider calls inside this round
+        // trip. Internal node-side tool dispatches loop without yielding to
+        // the wire, so the caller sees one summed Usage per `/execute`.
+        let mut total_usage = Usage::default();
+
         loop {
             let req = ChatRequest {
                 system: self.system_prompt.clone(),
@@ -110,6 +120,7 @@ impl AgentLoop {
                 cache_create = ?resp.usage.cache_creation_input_tokens,
                 "provider response"
             );
+            total_usage.add(&resp.usage);
 
             session.messages.push(json!({
                 "role": "assistant",
@@ -117,7 +128,12 @@ impl AgentLoop {
             }));
 
             match resp.stop_reason.as_str() {
-                "end_turn" => return Ok(AgentStepOutcome::Final(extract_text(&resp.content))),
+                "end_turn" => {
+                    return Ok(AgentStepOutcome::Final {
+                        content: extract_text(&resp.content),
+                        usage: total_usage,
+                    });
+                }
                 "tool_use" => {
                     // The model can emit multiple tool_use blocks in one
                     // assistant message (parallel tool calls). Anthropic
@@ -164,6 +180,7 @@ impl AgentLoop {
                             tool_use_id: id,
                             name,
                             input,
+                            usage: total_usage,
                         });
                     }
 

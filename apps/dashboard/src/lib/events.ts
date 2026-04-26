@@ -1,4 +1,4 @@
-import type { BackendType, RequestStatus } from "@flodex/protocol";
+import type { BackendType, RequestStatus, Usage } from "@flodex/protocol";
 
 /**
  * Unified session record used across the dashboard. Two sources:
@@ -31,6 +31,12 @@ export interface SessionRecord {
   errorMessage?: string;
   estimatedTokens: number;
   pricePer1k: number;
+  /**
+   * Real token usage summed across every agent-loop round trip the dashboard
+   * has observed for this session. Only tracked for `source=local` — remote
+   * sessions don't report usage to observers (it'd leak workload size).
+   */
+  actualUsage: Usage | null;
 }
 
 export function makeLocalSession(args: {
@@ -55,11 +61,59 @@ export function makeLocalSession(args: {
     toolCalls: [],
     estimatedTokens: args.estimatedTokens,
     pricePer1k: args.pricePer1k,
+    actualUsage: null,
   };
 }
 
-export function estimateCost(s: SessionRecord): number {
-  return (s.estimatedTokens / 1000) * s.pricePer1k;
+export function addUsage(a: Usage | null, b: Usage): Usage {
+  if (!a) {
+    return {
+      inputTokens: b.inputTokens,
+      outputTokens: b.outputTokens,
+      cacheCreationInputTokens: b.cacheCreationInputTokens ?? null,
+      cacheReadInputTokens: b.cacheReadInputTokens ?? null,
+    };
+  }
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheCreationInputTokens: sumOpt(a.cacheCreationInputTokens, b.cacheCreationInputTokens),
+    cacheReadInputTokens: sumOpt(a.cacheReadInputTokens, b.cacheReadInputTokens),
+  };
+}
+
+function sumOpt(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (a == null && b == null) return null;
+  return (a ?? 0) + (b ?? 0);
+}
+
+/** Total billable tokens (sums every category — cache reads/writes count too). */
+export function totalTokens(u: Usage): number {
+  return (
+    u.inputTokens +
+    u.outputTokens +
+    (u.cacheCreationInputTokens ?? 0) +
+    (u.cacheReadInputTokens ?? 0)
+  );
+}
+
+/**
+ * Real cost when we have observed usage; falls back to the user's pre-flight
+ * estimate (est. tokens × pricePer1k) before any provider response lands.
+ * Cache reads/writes get a single flat per-1K rate today — the on-chain
+ * receipt format will need explicit weights, but that's a later step.
+ */
+export function sessionCost(s: SessionRecord): { value: number; real: boolean } {
+  if (s.actualUsage) {
+    return {
+      value: (totalTokens(s.actualUsage) / 1000) * s.pricePer1k,
+      real: true,
+    };
+  }
+  return {
+    value: (s.estimatedTokens / 1000) * s.pricePer1k,
+    real: false,
+  };
 }
 
 export function isInFlight(s: SessionRecord): boolean {

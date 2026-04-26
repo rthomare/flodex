@@ -107,20 +107,64 @@ pub enum AgentStep {
     },
 }
 
+/// Token usage for a single agent-loop round trip. Real numbers from the
+/// underlying provider — not the client-side `estimated_tokens` on the job
+/// spec. Carried back over the wire so the client can compute accurate cost
+/// per session and (later) build signed receipts for on-chain settlement.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../packages/protocol/src/generated/")]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub cache_read_input_tokens: Option<u32>,
+}
+
+impl Usage {
+    /// Add another Usage in-place (used by the agent loop to sum provider
+    /// calls across one round trip).
+    pub fn add(&mut self, other: &Usage) {
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cache_creation_input_tokens = sum_opt(
+            self.cache_creation_input_tokens,
+            other.cache_creation_input_tokens,
+        );
+        self.cache_read_input_tokens = sum_opt(
+            self.cache_read_input_tokens,
+            other.cache_read_input_tokens,
+        );
+    }
+}
+
+fn sum_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (Some(x), Some(y)) => Some(x.saturating_add(y)),
+    }
+}
+
 /// Plaintext payload the node returns to the client.
 /// Either a final answer, or a request for the client to execute a local tool.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../packages/protocol/src/generated/")]
 #[serde(tag = "type")]
 pub enum AgentResponse {
-    #[serde(rename = "final")]
-    Final { content: String },
+    #[serde(rename = "final", rename_all = "camelCase")]
+    Final { content: String, usage: Usage },
     #[serde(rename = "toolCall", rename_all = "camelCase")]
     ToolCall {
         tool_use_id: String,
         name: String,
         #[ts(type = "unknown")]
         input: serde_json::Value,
+        usage: Usage,
     },
 }
 
@@ -135,24 +179,93 @@ pub struct BackendPrice {
     pub price_per_1k: f64,
 }
 
-/// Node advertises itself to the coordinator.
+/// Domain separator for registration signatures.
+pub const DOMAIN_REGISTER: &str = "flodex-v0-register";
+/// Domain separator for heartbeat signatures.
+pub const DOMAIN_HEARTBEAT: &str = "flodex-v0-heartbeat";
+
+/// Node advertises itself to the coordinator. The identity_pubkey + signature
+/// pair lets the coordinator verify the registrant owns the claimed identity;
+/// future on-chain registries verify the same signature shape against the
+/// same hash.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../packages/protocol/src/generated/")]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRegistration {
+    /// secp256k1 compressed public key, hex-encoded (66 chars). The node's
+    /// stable identity. Future on-chain analog: derive Ethereum address via
+    /// keccak256.
+    pub identity_pubkey: String,
+    /// X25519 public key, base64-encoded. Used by clients for per-session
+    /// ECDH; persisted alongside the identity key so it's stable too.
     pub public_key: String,
     pub url: String,
     pub backends: Vec<BackendType>,
     pub max_tokens: u32,
     pub pricing: Vec<BackendPrice>,
+    /// 16 random bytes hex-encoded. Makes signature replay observable.
+    pub nonce: String,
+    /// 64-byte ECDSA signature (r||s), hex-encoded. Computed over
+    /// [`canonical_register_bytes`]; verifiable with the identity_pubkey.
+    pub signature: String,
 }
 
-/// Keepalive — the coordinator expires entries that stop heartbeating.
+/// Keepalive — the coordinator expires entries that stop heartbeating. Signed
+/// so an attacker who knows a node's identity_pubkey can't keep a stale
+/// registration alive on its behalf.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../packages/protocol/src/generated/")]
 #[serde(rename_all = "camelCase")]
 pub struct NodeHeartbeat {
-    pub public_key: String,
+    pub identity_pubkey: String,
+    pub nonce: String,
+    pub signature: String,
+}
+
+#[derive(Serialize)]
+struct RegisterCanonical<'a> {
+    domain: &'static str,
+    identity_pubkey: &'a str,
+    public_key: &'a str,
+    url: &'a str,
+    backends: &'a [BackendType],
+    max_tokens: u32,
+    pricing: &'a [BackendPrice],
+    nonce: &'a str,
+}
+
+#[derive(Serialize)]
+struct HeartbeatCanonical<'a> {
+    domain: &'static str,
+    identity_pubkey: &'a str,
+    nonce: &'a str,
+}
+
+/// Canonical bytes signed by the node when registering. Both the node and
+/// the coordinator (and, later, the on-chain registry contract via the same
+/// hash) must compute the same byte sequence.
+pub fn canonical_register_bytes(reg: &NodeRegistration) -> Vec<u8> {
+    serde_json::to_vec(&RegisterCanonical {
+        domain: DOMAIN_REGISTER,
+        identity_pubkey: &reg.identity_pubkey,
+        public_key: &reg.public_key,
+        url: &reg.url,
+        backends: &reg.backends,
+        max_tokens: reg.max_tokens,
+        pricing: &reg.pricing,
+        nonce: &reg.nonce,
+    })
+    .expect("serializing register canonical struct cannot fail")
+}
+
+/// Canonical bytes signed by the node on each heartbeat.
+pub fn canonical_heartbeat_bytes(hb: &NodeHeartbeat) -> Vec<u8> {
+    serde_json::to_vec(&HeartbeatCanonical {
+        domain: DOMAIN_HEARTBEAT,
+        identity_pubkey: &hb.identity_pubkey,
+        nonce: &hb.nonce,
+    })
+    .expect("serializing heartbeat canonical struct cannot fail")
 }
 
 /// Client's request for a node that fits these constraints.

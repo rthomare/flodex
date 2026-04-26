@@ -1,3 +1,6 @@
+mod chains;
+mod identity;
+
 use agent::{
     AgentLoop, AnthropicClient, AnthropicProvider, ChatProvider, ChatRequest, CurrentTimeTool,
     DEFAULT_MODEL, Tool, WebFetchTool, read_local_file_def,
@@ -11,12 +14,15 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use crypto::{decrypt, derive_key, encrypt, NodeKeys};
+use crypto::{
+    decrypt, derive_key, encrypt, random_nonce_hex, NodeIdentity, NodeKeys,
+};
 use execution::{ExecutionBackend, LocalLlmBackend, MockTeeBackend};
 use local_llm::{default_cache_dir, resolve, LlamaServer, ModelSpec, OpenAiProvider};
 use protocol::{
-    AgentResponse, AgentStep, BackendPrice, BackendType, EncryptedRequest, EncryptedResponse,
-    NodeActivityReport, NodeHeartbeat, NodeInfo, NodeRegistration, RequestRecord, RequestStatus,
+    canonical_heartbeat_bytes, canonical_register_bytes, AgentResponse, AgentStep, BackendPrice,
+    BackendType, EncryptedRequest, EncryptedResponse, NodeActivityReport, NodeHeartbeat, NodeInfo,
+    NodeRegistration, RequestRecord, RequestStatus,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -34,6 +40,7 @@ Keep responses concise.";
 
 struct AppState {
     keys: NodeKeys,
+    identity: NodeIdentity,
     mock_tee: Option<MockTeeBackend>,
     local_llm: Option<LocalLlmBackend>,
     /// Held for lifetime — dropping it kills the child `llama-server`.
@@ -173,8 +180,12 @@ async fn main() -> Result<()> {
         ));
     }
 
+    let identity_path = identity::default_path()?;
+    let (keys, identity) = identity::load_or_generate(&identity_path)?;
+
     let state = Arc::new(AppState {
-        keys: NodeKeys::generate(),
+        keys,
+        identity,
         mock_tee,
         local_llm,
         _llama_server: llama_server,
@@ -188,11 +199,24 @@ async fn main() -> Result<()> {
     if state.local_llm.is_some() {
         backends.push(BackendType::Local);
     }
+    let identity_pubkey_hex = hex::encode(state.identity.public_compressed());
     tracing::info!(
         backends = ?backends,
-        node_public_key = %B64.encode(state.keys.public.as_bytes()),
+        identity_pubkey = %identity_pubkey_hex,
+        ecdh_pubkey = %B64.encode(state.keys.public.as_bytes()),
         "flodex node ready"
     );
+
+    if let Some(chain) = chains::from_env() {
+        tracing::info!(
+            chain = %chain.name,
+            chain_id = chain.chain_id,
+            registry = ?chain.registry,
+            escrow = ?chain.escrow,
+            usdc = %chain.usdc,
+            "chain config loaded"
+        );
+    }
 
     let app = Router::new()
         .route("/info", get(info))
@@ -208,18 +232,25 @@ async fn main() -> Result<()> {
         std::env::var("FLODEX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
 
     if let Ok(coord_url) = std::env::var("FLODEX_COORDINATOR") {
-        let pubkey_b64 = B64.encode(state.keys.public.as_bytes());
-        let reg = NodeRegistration {
-            public_key: pubkey_b64.clone(),
-            url: advertise_url,
-            backends: backends.clone(),
-            max_tokens: std::env::var("FLODEX_NODE_MAX_TOKENS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100_000),
-            pricing: read_pricing(&backends),
-        };
-        tokio::spawn(registration_loop(coord_url, reg, pubkey_b64));
+        let max_tokens = std::env::var("FLODEX_NODE_MAX_TOKENS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100_000);
+        let pricing = read_pricing(&backends);
+        let ecdh_pubkey_b64 = B64.encode(state.keys.public.as_bytes());
+
+        tokio::spawn(registration_loop(
+            coord_url,
+            state.clone(),
+            RegistrationConfig {
+                identity_pubkey: identity_pubkey_hex,
+                ecdh_pubkey: ecdh_pubkey_b64,
+                advertise_url,
+                backends,
+                max_tokens,
+                pricing,
+            },
+        ));
     }
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -252,12 +283,53 @@ fn read_pricing(backends: &[BackendType]) -> Vec<BackendPrice> {
         .collect()
 }
 
-async fn registration_loop(coord_url: String, reg: NodeRegistration, pubkey: String) {
+struct RegistrationConfig {
+    identity_pubkey: String,
+    ecdh_pubkey: String,
+    advertise_url: String,
+    backends: Vec<BackendType>,
+    max_tokens: u32,
+    pricing: Vec<BackendPrice>,
+}
+
+fn signed_registration(state: &AppState, cfg: &RegistrationConfig) -> NodeRegistration {
+    let mut reg = NodeRegistration {
+        identity_pubkey: cfg.identity_pubkey.clone(),
+        public_key: cfg.ecdh_pubkey.clone(),
+        url: cfg.advertise_url.clone(),
+        backends: cfg.backends.clone(),
+        max_tokens: cfg.max_tokens,
+        pricing: cfg.pricing.clone(),
+        nonce: random_nonce_hex(),
+        signature: String::new(),
+    };
+    let canonical = canonical_register_bytes(&reg);
+    reg.signature = hex::encode(state.identity.sign(&canonical));
+    reg
+}
+
+fn signed_heartbeat(state: &AppState, identity_pubkey: &str) -> NodeHeartbeat {
+    let mut hb = NodeHeartbeat {
+        identity_pubkey: identity_pubkey.to_string(),
+        nonce: random_nonce_hex(),
+        signature: String::new(),
+    };
+    let canonical = canonical_heartbeat_bytes(&hb);
+    hb.signature = hex::encode(state.identity.sign(&canonical));
+    hb
+}
+
+async fn registration_loop(
+    coord_url: String,
+    state: Arc<AppState>,
+    cfg: RegistrationConfig,
+) {
     let http = reqwest::Client::new();
     let register_url = format!("{coord_url}/nodes/register");
     let heartbeat_url = format!("{coord_url}/nodes/heartbeat");
 
     loop {
+        let reg = signed_registration(&state, &cfg);
         match http.post(&register_url).json(&reg).send().await {
             Ok(r) if r.status().is_success() => {
                 tracing::info!(coord = %coord_url, "registered with coordinator");
@@ -269,15 +341,14 @@ async fn registration_loop(coord_url: String, reg: NodeRegistration, pubkey: Str
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 
-    let hb = NodeHeartbeat {
-        public_key: pubkey.clone(),
-    };
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let hb = signed_heartbeat(&state, &cfg.identity_pubkey);
         match http.post(&heartbeat_url).json(&hb).send().await {
             Ok(r) if r.status().is_success() => {}
             Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
                 tracing::warn!("coordinator forgot us; re-registering");
+                let reg = signed_registration(&state, &cfg);
                 let _ = http.post(&register_url).json(&reg).send().await;
             }
             Ok(r) => tracing::warn!(status = %r.status(), "heartbeat rejected"),

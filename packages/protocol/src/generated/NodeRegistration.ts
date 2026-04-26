@@ -2,4 +2,4 @@
 import type { BackendPrice } from "./BackendPrice";
 import type { BackendType } from "./BackendType";
 
-export interface NodeRegistration { publicKey: string, url: string, backends: Array<BackendType>, maxTokens: number, pricing: Array<BackendPrice>, }
+export interface NodeRegistration { identityPubkey: string, publicKey: string, url: string, backends: Array<BackendType>, maxTokens: number, pricing: Array<BackendPrice>, nonce: string, signature: string, }

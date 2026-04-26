@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+protocol.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
