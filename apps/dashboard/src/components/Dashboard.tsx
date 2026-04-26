@@ -34,11 +34,11 @@ const browserTools: ToolHandlerMap = {
   },
 };
 
-// Default coordinator URL: env-configurable so the deployed dashboard points
-// at the hosted coordinator out-of-the-box, while local dev keeps targeting
-// localhost. Set `NEXT_PUBLIC_COORDINATOR_URL` at build time on Vercel.
+// Default coordinator URL: the demo network's hosted coordinator. Override
+// via `NEXT_PUBLIC_COORDINATOR_URL` at build time, or just edit the field in
+// the dashboard header for ad-hoc local-coordinator testing.
 const DEFAULT_COORDINATOR_URL =
-  process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "http://127.0.0.1:8000";
+  process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://flodex-dry-sun-2419.fly.dev";
 
 export default function Dashboard() {
   const [coordinatorUrl, setCoordinatorUrl] = useState(DEFAULT_COORDINATOR_URL);
@@ -200,9 +200,21 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex h-screen flex-col gap-3 p-4">
-      <header className="flex items-center justify-between">
-        <div>
+    <main className="relative h-screen w-screen overflow-hidden">
+      {/* Full-viewport graph canvas — sits behind every panel. */}
+      <div className="absolute inset-0">
+        <NodeGraph
+          nodes={nodes}
+          activeRequests={activeRequests}
+          selectedPubKey={selectedPubKey}
+          onSelect={setSelectedPubKey}
+          theme={theme}
+        />
+      </div>
+
+      {/* Header strip overlay. */}
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between p-4">
+        <div className="pointer-events-auto">
           <div className="text-xs uppercase tracking-widest text-holo-cyan">
             flodex
           </div>
@@ -211,7 +223,7 @@ export default function Dashboard() {
             {nodesError && <span className="ml-2 text-holo-red">· {nodesError}</span>}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="pointer-events-auto flex items-center gap-2 text-xs">
           <label className="text-fg/50">coordinator</label>
           <input
             value={coordinatorUrl}
@@ -229,35 +241,26 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-12 gap-3 overflow-hidden">
-        <aside className="col-span-3 flex flex-col gap-3 overflow-y-auto">
-          <RequestForm nodes={nodes} onSend={handleSend} disabled={sending} />
-          {selectedNode && (
-            <NodeDetail
-              node={selectedNode}
-              onClose={() => setSelectedPubKey(null)}
-            />
-          )}
-        </aside>
-
-        <section className="col-span-6 min-h-0">
-          <NodeGraph
-            nodes={nodes}
-            activeRequests={activeRequests}
-            selectedPubKey={selectedPubKey}
-            onSelect={setSelectedPubKey}
-            theme={theme}
+      {/* Left rail — request form + selected node detail. */}
+      <aside className="pointer-events-auto absolute bottom-20 left-4 top-20 z-10 flex w-80 flex-col gap-3 overflow-y-auto">
+        <RequestForm nodes={nodes} onSend={handleSend} disabled={sending} />
+        {selectedNode && (
+          <NodeDetail
+            node={selectedNode}
+            onClose={() => setSelectedPubKey(null)}
           />
-        </section>
+        )}
+      </aside>
 
-        <aside className="col-span-3 flex flex-col gap-3 overflow-hidden">
-          <OnChainStatus chainId={DEFAULT_CHAIN_ID} />
-          <CostPanel sessions={sessions} />
-          <SessionDetail session={selectedSession} />
-        </aside>
-      </div>
+      {/* Right rail — on-chain status, cost, selected session. */}
+      <aside className="pointer-events-auto absolute bottom-20 right-4 top-20 z-10 flex w-80 flex-col gap-3 overflow-y-auto">
+        <OnChainStatus chainId={DEFAULT_CHAIN_ID} />
+        <CostPanel sessions={sessions} />
+        <SessionDetail session={selectedSession} />
+      </aside>
 
-      <div className="h-12">
+      {/* Bottom timeline overlay. */}
+      <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-10 h-16 px-4 pb-3">
         <Timeline
           sessions={sessions}
           selectedSessionId={selectedSessionId}

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   forceCenter,
   forceCollide,
@@ -222,6 +222,11 @@ export default function NodeGraph({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
   const resetRef = useRef<() => void>(() => {});
+  // True while the canvas zoom indicator is on screen — drives the reset
+  // button's mutually-exclusive fade. Cleared on a timer matching the
+  // indicator's hold + fade duration.
+  const [zoomActive, setZoomActive] = useState(false);
+  const zoomHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stateRef = useRef<{
     graphNodes: GraphNode[];
@@ -768,16 +773,29 @@ export default function NodeGraph({
       const wy = (cy - s.height / 2 - s.view.ty) / s.view.scale;
       const factor = Math.pow(WHEEL_ZOOM_FACTOR, -ev.deltaY);
       const newScale = clamp(s.view.scale * factor, MIN_SCALE, MAX_SCALE);
-      if (newScale !== s.view.scale) s.lastZoomAt = Date.now();
+      if (newScale !== s.view.scale) {
+        s.lastZoomAt = Date.now();
+        markZoomActive();
+      }
       s.view.scale = newScale;
       s.view.tx = cx - s.width / 2 - wx * newScale;
       s.view.ty = cy - s.height / 2 - wy * newScale;
+    }
+
+    function markZoomActive() {
+      setZoomActive(true);
+      if (zoomHideTimerRef.current) clearTimeout(zoomHideTimerRef.current);
+      zoomHideTimerRef.current = setTimeout(() => {
+        setZoomActive(false);
+        zoomHideTimerRef.current = null;
+      }, ZOOM_INDICATOR_HOLD_MS + ZOOM_INDICATOR_FADE_MS);
     }
 
     resetRef.current = () => {
       const s = stateRef.current;
       s.view = { scale: 1, tx: 0, ty: 0 };
       s.lastZoomAt = Date.now();
+      markZoomActive();
       for (const n of s.graphNodes) {
         if (n.kind === "worker") {
           n.fx = null;
@@ -801,6 +819,7 @@ export default function NodeGraph({
       window.removeEventListener("mouseup", onMouseUp);
       canvas.removeEventListener("mouseleave", onMouseLeave);
       canvas.removeEventListener("wheel", onWheel);
+      if (zoomHideTimerRef.current) clearTimeout(zoomHideTimerRef.current);
     };
   }, [onSelect]);
 
@@ -810,7 +829,14 @@ export default function NodeGraph({
       <button
         type="button"
         onClick={() => resetRef.current()}
-        className="absolute right-3 top-3 rounded border border-holo-cyan/40 bg-track px-2 py-1 text-[10px] uppercase tracking-widest text-holo-cyan transition hover:bg-holo-cyan/10"
+        // Mutually exclusive with the canvas zoom indicator: fade + scale
+        // out when zooming, slide back in once the indicator finishes.
+        // Pointer-events disabled while hidden so it can't be hit blind.
+        className={`absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded border border-holo-cyan/40 bg-track px-2 py-1 text-[10px] uppercase tracking-widest text-holo-cyan transition-[opacity,transform] duration-300 ease-out hover:bg-holo-cyan/10 ${
+          zoomActive
+            ? "pointer-events-none -translate-y-2 opacity-0"
+            : "translate-y-0 opacity-100"
+        }`}
         title="reset view + node positions"
       >
         reset
