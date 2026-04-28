@@ -297,9 +297,14 @@ forge test                       # from contracts/
 cd contracts && forge script script/Deploy.s.sol:Deploy \
   --rpc-url $RPC --broadcast --legacy
 
-# Fly + Vercel
-fly deploy                       # from workspace root
-vercel --prod                    # from workspace root (uses vercel.json)
+# Fly + Vercel — single-shot deploy from latest main
+bun run deploy                   # both targets (also: --fly-only / --vercel-only / --skip-pull)
+fly deploy                       # manual: just the coordinator
+vercel --prod                    # manual: just the dashboard
+
+# CI mirror: .github/workflows/deploy.yml runs the same two deploys on push
+# to main / manual dispatch. Needs repo secrets FLY_API_TOKEN, VERCEL_TOKEN,
+# VERCEL_ORG_ID, VERCEL_PROJECT_ID.
 ```
 
 Env vars and backend config: see `README.md` → Environment variables.
