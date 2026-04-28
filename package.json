@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "./scripts/dev.sh",
     "dev:kill": "./scripts/dev.sh --kill",
+    "deploy": "./scripts/deploy.sh",
     "dash": "bun run --cwd apps/dashboard dev",
     "client": "bun run --cwd apps/client start",
     "gen:types": "cargo test -p protocol export_bindings --quiet"

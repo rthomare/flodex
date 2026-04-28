@@ -486,6 +486,54 @@ those pins in `Cargo.lock`.
 
 ---
 
+## Deploy
+
+Two deploy targets, one script. From the repo root:
+
+```bash
+bun run deploy           # both targets (default branch: main, remote: origin)
+bun run deploy --fly-only
+bun run deploy --vercel-only
+bun run deploy --skip-pull   # ship the current working tree as-is
+```
+
+What it does:
+
+1. Aborts if the working tree is dirty (unless `--skip-pull`).
+2. `git fetch` + checkout + fast-forward `main` from `origin`.
+3. `flyctl deploy --config fly.toml` — coordinator → `flodex-dry-sun-2419.fly.dev`.
+4. `vercel --prod --yes` — dashboard.
+
+Override the branch/remote via `FLODEX_DEPLOY_BRANCH` / `FLODEX_DEPLOY_REMOTE`.
+
+**Prerequisites** (one-time):
+
+- `flyctl` on PATH and either `flyctl auth login` or `FLY_API_TOKEN` in env
+  ([install](https://fly.io/docs/hands-on/install-flyctl/)).
+- `vercel` on PATH and either `vercel login` or `VERCEL_TOKEN` in env
+  (`bun add -g vercel`). First-time setup also needs `vercel link` from the
+  repo root so `.vercel/project.json` is populated.
+
+### GitHub Actions
+
+`.github/workflows/deploy.yml` runs the same two deploys on every push to
+`main` and on manual dispatch (Actions tab → "deploy" → "Run workflow",
+optionally scoping to `fly`, `vercel`, or `both`).
+
+Required repo secrets:
+
+| Secret              | Where to get it                                                      |
+| ------------------- | -------------------------------------------------------------------- |
+| `FLY_API_TOKEN`     | `flyctl auth token`                                                  |
+| `VERCEL_TOKEN`      | https://vercel.com/account/tokens                                    |
+| `VERCEL_ORG_ID`     | `.vercel/project.json` after `vercel link` (or vercel.com → settings)|
+| `VERCEL_PROJECT_ID` | same                                                                 |
+
+The two deploys run as parallel jobs; either can fail independently without
+blocking the other.
+
+---
+
 ## Security notes for v0
 
 - **macOS sandbox is narrow** — only blocks outbound network from the
