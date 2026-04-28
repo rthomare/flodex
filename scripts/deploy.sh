@@ -130,15 +130,32 @@ fi
 
 # --- vercel ------------------------------------------------------------------
 
-# Deploy a single Vercel app from its own folder. The folder must already be
-# linked (`vercel link`) or have VERCEL_PROJECT_ID set in the environment.
+# Deploy a single Vercel app. The app's folder must already be linked
+# (`cd apps/<app> && vercel link`) so apps/<app>/.vercel/project.json exists
+# with rootDirectory = "apps/<app>". We deploy *from the repo root* with the
+# project ID forwarded via env var so Vercel uploads the whole workspace
+# (packages/* included) and bun install can resolve workspace:* deps.
 deploy_vercel_app() {
   local label="$1"; local dir="$2"
-  log "vercel deploy --prod ($label)"
+  local project_json="$ROOT/$dir/.vercel/project.json"
+
+  [ -f "$project_json" ] || die "$label not linked. Run: (cd $dir && vercel link)"
+
+  # Pull projectId / orgId out of the linked project (no jq dependency).
+  local project_id org_id
+  project_id="$(sed -n 's/.*"projectId" *: *"\([^"]*\)".*/\1/p' "$project_json")"
+  org_id="$(sed -n 's/.*"orgId" *: *"\([^"]*\)".*/\1/p' "$project_json")"
+
+  [ -n "$project_id" ] || die "$label: missing projectId in $project_json"
+  [ -n "$org_id" ]     || die "$label: missing orgId in $project_json"
+
+  log "vercel deploy --prod ($label) [project=$project_id, root=$dir]"
   local args=(--prod --yes)
-  [ -n "${VERCEL_TOKEN:-}" ]  && args+=(--token "$VERCEL_TOKEN")
-  [ -n "${VERCEL_ORG_ID:-}" ] && args+=(--scope "$VERCEL_ORG_ID")
-  ( cd "$ROOT/$dir" && vercel "${args[@]}" )
+  [ -n "${VERCEL_TOKEN:-}" ] && args+=(--token "$VERCEL_TOKEN")
+
+  ( cd "$ROOT" \
+      && VERCEL_PROJECT_ID="$project_id" VERCEL_ORG_ID="$org_id" \
+         vercel "${args[@]}" )
   log "vercel: $label deployed"
 }
 

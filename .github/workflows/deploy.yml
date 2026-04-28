@@ -38,9 +38,11 @@ jobs:
       github.event.inputs.target == 'vercel' ||
       github.event.inputs.target == 'dashboard'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/dashboard
+    # Run from the repo root (no working-directory override) so the entire
+    # workspace — root package.json with `workspaces` and packages/* — is
+    # uploaded. Vercel uses the project's configured rootDirectory
+    # ("apps/dashboard") to locate the app inside the upload, and bun
+    # install runs at the workspace root so `workspace:*` deps resolve.
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -65,9 +67,6 @@ jobs:
       github.event.inputs.target == 'vercel' ||
       github.event.inputs.target == 'marketing'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/marketing
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
