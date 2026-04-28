@@ -24,7 +24,8 @@ it from your laptop in a few minutes (see [Onboarding](#onboarding)).
 
 | Component         | Where                                                             |
 | ----------------- | ----------------------------------------------------------------- |
-| Coordinator       | `https://flodex-dry-sun-2419.fly.dev`                             |
+| Dashboard         | `https://dashboard.fldx.ai` (or `bun run dash` for local dev)     |
+| Coordinator       | `https://coordinator.fldx.ai`                                     |
 | NodeRegistry      | [`0xf52b8f75…7A51C`](https://sepolia.basescan.org/address/0xf52b8f75eed06E61801D5251022FD052aa97A51C) on Base Sepolia |
 | JobEscrow         | [`0xEb577b58…D4894`](https://sepolia.basescan.org/address/0xEb577b58913Ad50C3203fFdD21a4EB28C46D4894) on Base Sepolia |
 | Stake/payment token | Circle testnet USDC (`0x036C…CF7e`)                              |
@@ -77,7 +78,7 @@ your dashboards point at the same contract.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_COORDINATOR=https://coordinator.fldx.ai \
 FLODEX_NODE_URL=https://your.tunnel.example \
 FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
 FLODEX_CHAIN_ID=84532 \
@@ -94,10 +95,12 @@ You'll see:
 If approve/register reverts (insufficient USDC, gas), the warning logs
 the reason; refund the address and restart.
 
-**Each operator: run the dashboard:**
+**Each operator: open the dashboard.** Visit `https://dashboard.fldx.ai`
+(the hosted Vercel deploy points at `coordinator.fldx.ai` by default), or
+run it locally for development:
 
 ```bash
-bun run dash    # http://localhost:3000
+bun run dash    # http://localhost:3000 — uses NEXT_PUBLIC_COORDINATOR_URL or the demo coordinator
 ```
 
 In the dashboard:
@@ -133,7 +136,7 @@ cargo build --release -p node
 
 # 3. Register against the hosted coordinator
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_COORDINATOR=https://coordinator.fldx.ai \
 FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
 ./target/release/flodex-node
 ```
@@ -141,14 +144,14 @@ FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
 The first run generates a persistent identity at
 `~/.flodex/node/identity.json`. Same identity (same secp256k1 pubkey) every
 restart. Heartbeats every 10s. Watch the coordinator log it joining at
-`curl https://flodex-dry-sun-2419.fly.dev/nodes`.
+`curl https://coordinator.fldx.ai/nodes`.
 
 ### Send a request through the demo network
 
 ```bash
 bun install
 bun run apps/client/src/index.ts \
-  --coordinator https://flodex-dry-sun-2419.fly.dev \
+  --coordinator https://coordinator.fldx.ai \
   -b mock-tee \
   send "What time is it? And summarize https://example.com."
 ```
@@ -211,7 +214,7 @@ Pre-fund the node's address with Sepolia ETH + USDC before starting:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_COORDINATOR=https://coordinator.fldx.ai \
 FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
 FLODEX_CHAIN_ID=84532 \
 FLODEX_NODE_URL=https://your.public.node.url \
@@ -667,7 +670,7 @@ What it does:
 
 1. Aborts if the working tree is dirty (unless `--skip-pull`).
 2. `git fetch` + checkout + fast-forward `main` from `origin`.
-3. `flyctl deploy --config fly.toml` — coordinator → `flodex-dry-sun-2419.fly.dev`.
+3. `flyctl deploy --config fly.toml` — coordinator → `coordinator.fldx.ai` (CNAME → `flodex-dry-sun-2419.fly.dev`).
 4. `vercel --prod --yes` — dashboard.
 
 Override the branch/remote via `FLODEX_DEPLOY_BRANCH` / `FLODEX_DEPLOY_REMOTE`.

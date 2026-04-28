@@ -46,7 +46,7 @@ const browserTools: ToolHandlerMap = {
 // via `NEXT_PUBLIC_COORDINATOR_URL` at build time, or just edit the field in
 // the dashboard header for ad-hoc local-coordinator testing.
 const DEFAULT_COORDINATOR_URL =
-  process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://flodex-dry-sun-2419.fly.dev";
+  process.env.NEXT_PUBLIC_COORDINATOR_URL ?? "https://coordinator.fldx.ai";
 
 export default function Dashboard() {
   const [coordinatorUrl, setCoordinatorUrl] = useState(DEFAULT_COORDINATOR_URL);

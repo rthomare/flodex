@@ -90,7 +90,9 @@ content. The economic layer (USDC stake + escrow) lives on Base.
 
 ## Demo network
 
-- Coordinator: `https://flodex-dry-sun-2419.fly.dev` (Fly.io, auto-stops idle,
+- Dashboard: `https://dashboard.fldx.ai` (Vercel; defaults to the demo
+  coordinator below). Local dev: `bun run dash` → `http://localhost:3000`.
+- Coordinator: `https://coordinator.fldx.ai` (Fly.io, auto-stops idle,
   ~1.5s cold start; healthcheck on `GET /nodes`).
 - Base Sepolia (chain id `84532`):
   - `NodeRegistry` `0xf52b8f75eed06E61801D5251022FD052aa97A51C`
@@ -324,7 +326,7 @@ bun run dash                     # :3000
 bun run apps/client/src/index.ts --coordinator http://127.0.0.1:8000 -b mock-tee send "…"
 
 # Demo network: register a local node against the hosted coordinator
-FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev cargo run -p node
+FLODEX_COORDINATOR=https://coordinator.fldx.ai cargo run -p node
 
 # Tests
 cargo test                       # Rust workspace
