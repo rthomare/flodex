@@ -16,3 +16,7 @@ export type { NodeRegistration } from "./generated/NodeRegistration.ts";
 export type { NodeHeartbeat } from "./generated/NodeHeartbeat.ts";
 export type { JobSpec } from "./generated/JobSpec.ts";
 export type { JobMatch } from "./generated/JobMatch.ts";
+export type { ChannelUpdate } from "./generated/ChannelUpdate.ts";
+export type { ClientAck } from "./generated/ClientAck.ts";
+export type { NodeSignedReceipt } from "./generated/NodeSignedReceipt.ts";
+export type { ReceiptBreakdown } from "./generated/ReceiptBreakdown.ts";

@@ -1,0 +1,22 @@
+{
+  "name": "@flodex/tests-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run channel-flow.ts"
+  },
+  "dependencies": {
+    "@flodex/client-lib": "workspace:*",
+    "@flodex/protocol": "workspace:*",
+    "@noble/curves": "1.4.0",
+    "@noble/hashes": "1.4.0",
+    "@scure/base": "1.1.6",
+    "viem": "2.48.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.0",
+    "@types/node": "22.9.0",
+    "typescript": "5.4.5"
+  }
+}

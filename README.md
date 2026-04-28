@@ -31,9 +31,92 @@ it from your laptop in a few minutes (see [Onboarding](#onboarding)).
 
 The off-chain coordinator and the on-chain registry coexist: nodes register
 off-chain to participate in the dashboard's discovery layer, and on-chain
-once the node opts into the escrow flow (not yet wired). On-chain identity
+when `FLODEX_CHAIN_ID` is set (auto-register at startup). On-chain identity
 is the secp256k1 keypair the node persists at `~/.flodex/node/identity.json`,
 same key in both places.
+
+### Two-laptop demo runbook
+
+End-to-end walkthrough for two operators (you + a cofounder) to register
+nodes against the live demo coordinator and pay each other in Sepolia USDC.
+
+**Prerequisites (per laptop):**
+- ~0.05 Sepolia ETH on the node's Ethereum address (printed by the node at
+  startup when `FLODEX_CHAIN_ID=84532` is set — start, copy, Ctrl+C,
+  fund, restart).
+- ≥100 Sepolia USDC on the same address (registry's minimum stake).
+- Wallet (MetaMask) loaded with a separate "client" key holding ≥10
+  Sepolia USDC for opening a channel against the other party's node.
+- A publicly-reachable URL for the node (e.g. via `cloudflared tunnel
+  --url http://localhost:7777` or ngrok). Set `FLODEX_NODE_URL` to it.
+
+**One-time per network: deploy `JobChannel`** (whichever of you does it,
+share the resulting address):
+
+```bash
+cd contracts
+PRIVATE_KEY=0x<deployer-key> \
+MIN_STAKE=100000000 \
+CHALLENGE_WINDOW=3600 \
+CHANNEL_RECLAIM_TIMEOUT=86400 \
+USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e \
+REGISTRY_ADDRESS=0xf52b8f75eed06E61801D5251022FD052aa97A51C \
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url https://sepolia.base.org \
+  --broadcast --legacy
+```
+
+Paste the printed `JobChannel  0x…` into:
+- `packages/chains/src/index.ts` → `chains[84532].addresses.channel`
+- `apps/node/src/chains.rs` → `BASE_SEPOLIA.channel`
+
+Both must match exactly. Commit + share the diff with your cofounder so
+your dashboards point at the same contract.
+
+**Each operator: start a node** (auto-registers on first run):
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... \
+FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_NODE_URL=https://your.tunnel.example \
+FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
+FLODEX_CHAIN_ID=84532 \
+cargo run --release -p node
+```
+
+You'll see:
+- `chain config loaded` + your node's `eth_address`
+- `node not yet registered on-chain — submitting approve + register`
+- `approve confirmed` then `register confirmed — node is on-chain`
+- `registered with coordinator`
+- `bid posted` (every 60s)
+
+If approve/register reverts (insufficient USDC, gas), the warning logs
+the reason; refund the address and restart.
+
+**Each operator: run the dashboard:**
+
+```bash
+bun run dash    # http://localhost:3000
+```
+
+In the dashboard:
+1. Connect MetaMask (the client wallet, not the node key) to Base
+   Sepolia.
+2. Click your cofounder's node in the graph.
+3. In the Channel panel, deposit (e.g.) 5 USDC. MetaMask will pop
+   approve + openChannel; sign both.
+4. Send a prompt with that node selected. Each round trip:
+   - The node returns a signed receipt with cumulative `cumOwed`.
+   - The dashboard's wallet auto-signs the ack (one popup per round
+     trip — known UX gap, see CLAUDE.md "session-key receipts").
+5. When done, click "Cooperative close" in the Channel panel. One tx
+   settles the latest bilaterally-signed state on-chain. Watch USDC
+   move on Basescan: client → node (cumOwed), client refund (deposit -
+   cumOwed).
+
+Both parties run identical flows pointing at each other's nodes. Each
+channel is independent.
 
 ---
 
@@ -75,16 +158,92 @@ volunteered for the demo). End-to-end encrypted to whichever node it picks.
 
 ### Get testnet funds (for the on-chain layer)
 
-The contracts only matter once you start opening real escrow sessions —
-which isn't wired into the CLI yet. When that lands you'll need:
+To open a real payment channel against a registered node and pay them in
+USDC, fund **both** the node operator's address and the client's wallet:
 
 | Asset              | Faucet                                                                    |
 | ------------------ | ------------------------------------------------------------------------- |
 | Base Sepolia ETH   | https://www.alchemy.com/faucets/base-sepolia                              |
 | Base Sepolia USDC  | https://faucet.circle.com (pick "Base Sepolia")                           |
 
-Same wallet for both. ~0.05 Sepolia ETH covers gas for register + several
-sessions; 100 USDC covers the registry's minimum stake.
+Same faucet for both addresses. ~0.05 Sepolia ETH covers gas for register +
+several channel txs; the node needs ≥100 USDC for the registry's minimum
+stake; the client needs whatever they intend to deposit into a channel.
+
+### Deploy `JobChannel` to Base Sepolia (one-time per network)
+
+The deployed `NodeRegistry` is reusable; `JobChannel` was rewritten and needs
+a fresh deploy. Run once with a deployer key that has a few cents of Sepolia
+ETH:
+
+```bash
+cd contracts
+PRIVATE_KEY=0x<deployer-key> \
+MIN_STAKE=100000000 \
+CHALLENGE_WINDOW=3600 \
+CHANNEL_RECLAIM_TIMEOUT=86400 \
+USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e \
+REGISTRY_ADDRESS=0xf52b8f75eed06E61801D5251022FD052aa97A51C \
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url https://sepolia.base.org \
+  --broadcast --legacy
+```
+
+The script prints `JobChannel  0x…`. Paste that address into **both**:
+
+- `packages/chains/src/index.ts` → `chains[84532].addresses.channel`
+- `apps/node/src/chains.rs` → `BASE_SEPOLIA.channel`
+
+These two files are required to stay in lockstep — see CLAUDE.md's invariants.
+
+### Register your node on-chain
+
+The node auto-registers at startup when `FLODEX_CHAIN_ID` selects a chain
+that has a registry deployed. The flow:
+
+1. Reads `~/.flodex/node/identity.json` to derive the node's Ethereum
+   address (same secp256k1 key as the off-chain identity).
+2. Calls `NodeRegistry.isActive(myAddr)`. If already active, skips.
+3. Otherwise sends `USDC.approve(registry, stake)` and
+   `NodeRegistry.register(...)` and waits for both receipts.
+
+Pre-fund the node's address with Sepolia ETH + USDC before starting:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... \
+FLODEX_COORDINATOR=https://flodex-dry-sun-2419.fly.dev \
+FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
+FLODEX_CHAIN_ID=84532 \
+FLODEX_NODE_URL=https://your.public.node.url \
+./target/release/flodex-node
+```
+
+Optional knobs: `FLODEX_NODE_STAKE` (raw USDC base units, default
+`100000000` = 100 USDC), `FLODEX_RPC_URL` (override the default RPC).
+
+If the auto-register fails (RPC outage, insufficient gas, etc.) the node
+keeps running off-chain so you can still serve free traffic; the warning
+log includes the error. Manual fallback via `cast`:
+
+```bash
+NODE_KEY=0x<32-byte-hex-from-identity.json>
+REGISTRY=0xf52b8f75eed06E61801D5251022FD052aa97A51C
+USDC=0x036CbD53842c5426634e7929541eC2318f3dCF7e
+RPC=https://sepolia.base.org
+
+cast send "$USDC" "approve(address,uint256)" "$REGISTRY" 100000000 \
+  --rpc-url "$RPC" --private-key "$NODE_KEY"
+
+cast send "$REGISTRY" \
+  "register(string,bytes32,uint8,uint64,uint256[4],uint256)" \
+  "https://your.public.node.url" \
+  "0x<32-byte-x25519-pubkey-hex>" \
+  1 \
+  100000 \
+  "[5000,0,0,0]" \
+  100000000 \
+  --rpc-url "$RPC" --private-key "$NODE_KEY"
+```
 
 ---
 
@@ -360,11 +519,16 @@ design: sees job specs only, never request bodies.
 | `/nodes/register`  | POST   | Node advertises its pubkey, URL, backends, capacity, pricing                                          |
 | `/nodes/heartbeat` | POST   | Keepalive — entries expire after 30s without one                                                      |
 | `/nodes`           | GET    | Current registry snapshot (used by the dashboard for its node graph)                                  |
-| `/jobs/match`      | POST   | Client POSTs a `JobSpec` (backend + estimated tokens + max price/1K); first matching node is returned |
+| `/jobs/match`      | POST   | Client POSTs a `JobSpec` (backend + estimated tokens + max price/1K); lowest-priced matching bid wins |
+| `/bids`            | POST   | Node posts a signed standing-offer `Bid` (per-backend, with `valid_until`)                            |
+| `/bids`            | GET    | Current unexpired bid book                                                                            |
 
-Matching policy is first-match today — easy to swap for cheapest-first or
-round-robin. Bidding/auction layers cleanly on top (RFQ round-trip before
-assignment) when you need it.
+Matcher prefers an active `Bid` over the node's `NodeRegistration` pricing
+when present. Nodes broadcast bids every 60s (180s validity); a missed
+broadcast ages the bid out and the matcher falls back to the registration
+default. RFQ-style per-job bidding is a follow-on — the on-chain
+`JobChannel.cooperativeClose` already trusts a bilaterally-signed
+`cumOwed`, so price negotiation can stay off-chain.
 
 ---
 
@@ -404,9 +568,11 @@ See the dashboard README section in `apps/dashboard/` for per-panel details.
 | `FLODEX_NODE_ADDR`           | `127.0.0.1:7777`           | Bind address                                  |
 | `FLODEX_NODE_URL`            | `http://$FLODEX_NODE_ADDR` | URL advertised to the coordinator             |
 | `FLODEX_NODE_MAX_TOKENS`     | `100000`                   | Capacity advertised                           |
-| `FLODEX_NODE_PRICE_MOCK_TEE` | `0.0`                      | Price per 1K tokens for mock-tee              |
-| `FLODEX_NODE_PRICE_LOCAL`    | `0.0`                      | Price per 1K tokens for local                 |
+| `FLODEX_NODE_PRICE_MOCK_TEE` | `0.0`                      | Dollars per 1K tokens for mock-tee (× 1e6 → on-chain raw USDC) |
+| `FLODEX_NODE_PRICE_LOCAL`    | `0.0`                      | Dollars per 1K tokens for local                |
 | `FLODEX_COORDINATOR`         | —                          | If set, node registers + heartbeats here      |
+| `FLODEX_CHAIN_ID`            | —                          | `84532` for Base Sepolia. Enables channel receipts. |
+| `FLODEX_RPC_URL`             | chain default              | RPC endpoint override (Alchemy / Infura)      |
 | `HF_TOKEN`                   | —                          | Optional HuggingFace auth token               |
 
 ### Coordinator
@@ -569,14 +735,25 @@ blocking the other.
 
 - ✅ Real token usage piped into `AgentEvent` (replaces cost estimate)
 - ✅ Persisted node keypairs + signed coordinator registrations
-- ✅ NodeRegistry + JobEscrow contracts on Base Sepolia
+- ✅ NodeRegistry on Base Sepolia
+- ✅ JobChannel (payment-channel escrow) — `cooperativeClose` / `challengeClose` /
+  `reclaim`, bilateral EIP-191 sigs, in-Rust receipt emission, dashboard
+  wallet-connect + open/close UI
+- ✅ Batched-receipt protocol — `ChannelUpdate`, `NodeSignedReceipt`, `ClientAck`
+  on the wire; runAgentLoop attaches `channelId` and surfaces receipts
 - ✅ Hosted demo coordinator on Fly + dashboard wired to read on-chain state
-- Node calls `registry.register()` on-chain (alloy integration; needs Rust 1.81+ MSRV bump)
-- Client opens real escrow sessions before sending requests (wallet connect + USDC approve flow)
+- ✅ Auto-register at node startup (hand-rolled JSON-RPC + RLP + ABI codec
+  to stay on Rust 1.74)
+- ✅ Multi-receipt streaming — dashboard auto-signs every receipt as it
+  arrives, bounding bad-debt to one round trip
+- ✅ EIP-191 signed standing-offer bids — coordinator hosts bid book,
+  matcher picks lowest active bid per (client, backend)
 - Harden Linux/Windows sandboxing of `llama-server`
 - LocalStorage persistence for the dashboard event log
 - Tier-aware client-side routing (cheap sub-tasks → local, hard sub-tasks → frontier)
-- Commit-reveal or RFQ-style bidding on the coordinator
+- RFQ-style per-job bidding (today's bids are standing offers, refreshed
+  every 60s — RFQ would be client-initiated quote requests)
+- Session-key receipts so dashboards don't pop the wallet per round trip
 - FHE backend via TFHE-rs (toy encrypted layer first; not end-to-end inference)
 - zkLLM research track (small-model inference proofs)
 

@@ -1,4 +1,9 @@
-import type { AgentResponse, BackendType } from "@flodex/protocol";
+import type {
+  AgentResponse,
+  BackendType,
+  ClientAck,
+  NodeSignedReceipt,
+} from "@flodex/protocol";
 
 export type ToolHandler = (
   input: unknown,
@@ -18,6 +23,7 @@ export type AgentEvent =
   | { kind: "toolCallStart"; sessionId: string; name: string; input: unknown }
   | { kind: "toolCallEnd"; sessionId: string; name: string; isError: boolean }
   | { kind: "final"; sessionId: string; content: string }
+  | { kind: "receipt"; sessionId: string; receipt: NodeSignedReceipt; ack?: ClientAck }
   | { kind: "error"; sessionId: string; message: string };
 
 export type AgentEventHandler = (event: AgentEvent) => void;

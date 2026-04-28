@@ -38,22 +38,49 @@ content. The economic layer (USDC stake + escrow) lives on Base.
 - Tools: `current_time` (node), `web_fetch` (node), `read_local_file` (client).
 - TS CLI + Next.js dashboard (d3-force graph, on-chain status panel via viem,
   cost panel, timeline).
-- **On-chain layer (Base Sepolia)**: `NodeRegistry` + `JobEscrow` Foundry
-  contracts deployed; ECDSA receipt verification via `ecrecover`. Foundry test
-  suite (19 tests). `MockUSDC` for local Anvil.
-- **Demo network**: coordinator hosted on Fly.io; contracts on Base Sepolia.
-  Local dashboard works against the hosted coordinator.
+- **On-chain layer (Base Sepolia)**: `NodeRegistry` deployed; `JobChannel`
+  (payment-channel escrow) implemented + Foundry-tested (29 tests across
+  registry + channel) but **not yet redeployed** — old `JobEscrow` was
+  removed in the channel rewrite. `MockUSDC` for local Anvil.
+- **Batched-receipt protocol**: per-(client, node) channels; node signs
+  cumulative `ChannelUpdate` (EIP-191) on every round trip; client
+  co-signs via the dashboard's wallet; on `cooperativeClose` the highest
+  bilaterally-signed state settles in one tx (1k requests → 1 settle).
+- **Dashboard wallet UX**: RainbowKit + wagmi connect button, `useChannel`
+  hook (open / sign-receipt / cooperative-close), `ChannelPanel` UI.
+  `runAgentLoop` accepts a `channelId` and surfaces receipts via
+  `onEvent({kind: "receipt"})`. Dashboard passes `signAck` so every
+  receipt is auto-signed as it arrives (bad-debt bounded to one round
+  trip; trade-off is one wallet popup per receipt until session keys
+  land).
+- **Auto-register at node startup**: hand-rolled JSON-RPC + RLP +
+  EIP-1559 tx signing in `apps/node/src/eth/` (no alloy/ethers, stays
+  on Rust 1.74). When `FLODEX_CHAIN_ID` selects a chain with a registry,
+  startup runs `isActive` → if absent, `USDC.approve` + `register`. Falls
+  back gracefully on RPC error (cast-send escape hatch still documented).
+- **Bidding (standing offers)**: `Bid` protocol type signed via the same
+  SHA-256 + 64-byte ECDSA scheme as registrations. Coordinator hosts a
+  per-(node, backend) bid book at `POST/GET /bids` with TTL eviction.
+  `/jobs/match` prefers the lowest active bid, falls back to registration
+  pricing. Node spawns `bid_loop` posting every 60s (180s validity).
+- **Demo network**: coordinator hosted on Fly.io. Local dashboard works
+  against the hosted coordinator.
 
 **Stubs / placeholders / not started:**
 
 - `BackendType::Fhe`, `BackendType::Mcp` — no implementation.
 - Linux / Windows sandbox — unsandboxed with a warning.
 - No real TEE attestation, FHE compute, or zkML.
-- **Node doesn't yet call `registry.register()` on-chain.** alloy integration
-  needs a Rust 1.81+ MSRV bump (we're on 1.74); ethers-rs is a 1.74-compatible
-  fallback.
-- **Dashboard doesn't yet call `escrow.openSession()`.** Needs wallet-connect
-  (RainbowKit / WalletConnect) + USDC approve UX.
+- **`JobChannel` redeploy pending.** New contract is implemented + tested
+  (29 forge tests pass) but the deployed Sepolia address is still null.
+  Operator runs `forge script Deploy.s.sol` (instructions in README) and
+  pastes the resulting address into both `packages/chains/src/index.ts`
+  and `apps/node/src/chains.rs`. Until then the dashboard's wallet flow
+  has nothing to point at; off-chain routing still works.
+- **Session-key receipts.** Today the dashboard auto-signs every receipt
+  via the wallet, so each round trip pops MetaMask. Real seamless UX
+  needs session keys (in-browser key, on-chain authorization). Punted to
+  v0.1 — design discussed but no contract change yet.
 - **Public dashboard deploy**: scaffolded (`vercel.json`, `.vercelignore`,
   env-configurable URL) but not pushed (Vercel rate limits last attempt).
 - LocalStorage persistence for dashboard event log.
@@ -67,10 +94,11 @@ content. The economic layer (USDC stake + escrow) lives on Base.
   ~1.5s cold start; healthcheck on `GET /nodes`).
 - Base Sepolia (chain id `84532`):
   - `NodeRegistry` `0xf52b8f75eed06E61801D5251022FD052aa97A51C`
-  - `JobEscrow`    `0xEb577b58913Ad50C3203fFdD21a4EB28C46D4894`
+  - `JobChannel`   _TBD — redeploy pending after the channel rewrite_
   - USDC (Circle)  `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
   - Owner          `0xc18ee1690606e2BaE6252B502446d5697B694367`
-- Min stake: 100 USDC. Reclaim timeout: 1 hour.
+- Min stake: 100 USDC. Channel challenge window: 1 hour. Channel reclaim
+  timeout: 24 hours.
 
 Addresses pinned in `packages/chains/src/index.ts` (TS) and
 `apps/node/src/chains.rs` (Rust). **Both must stay in sync.**
@@ -147,12 +175,22 @@ trait ExecutionBackend {
   caller's address (msg.sender) IS the identity. Pricing as `uint256[4]`
   indexed by `Backend` enum mirroring Rust `BackendType`. Backend support as
   a `uint8` bitmap.
-- **JobEscrow**: `openSession` locks USDC; `settle` accepts a node-signed
-  receipt (keccak256 + EIP-191 + 65-byte sig, recovered via OZ ECDSA),
-  computes cost from registry pricing, pays node + refunds client. `reclaim`
-  after timeout for client safety.
-- Receipt domain separator: `flodex-v0-receipt`. Single receipt per session
-  in MVP; multi-receipt streaming is on the roadmap.
+- **JobChannel**: long-lived per-(client, node) payment channels.
+  `openChannel` locks a USDC deposit; off-chain receipts accumulate;
+  `cooperativeClose` (both sigs) settles instantly using the highest
+  bilaterally-signed `cumOwed`; `challengeClose` + `submitChallenge` +
+  `finalize` handle disputes; `reclaim` is the client safety valve.
+  Bilateral sigs mean the contract trusts the on-wire `cumOwed` literally
+  — no on-chain pricing math.
+- Receipt format: `keccak256(abi.encode(CHANNEL_UPDATE_DOMAIN, chainid,
+  address(this), channelId, nonce, cumOwed))`, EIP-191 wrapped, 65-byte
+  `r||s||v` signature recovered via OZ ECDSA.
+- Domain separator: `flodex-v0-channel-update` (the contract embeds
+  `keccak256(...)` as a `bytes32` constant — Rust + TS use the same hash
+  via `protocol::channel_update_domain_hash()`).
+- Pricing on the wire: `BackendPrice.price_per_1k` is a decimal **string**
+  of raw USDC base units (6 decimals) — matches `uint256` exactly. Old f64
+  type is gone.
 
 ---
 
@@ -166,7 +204,7 @@ apps/
   node/          Rust axum node — backends + agent loop + identity persistence
   proxy/         Anthropic-compat proxy for Claude Code (bypasses agent loop)
 contracts/
-  src/           NodeRegistry.sol + JobEscrow.sol
+  src/           NodeRegistry.sol + JobChannel.sol
   test/          Forge tests + MockUSDC
   script/        Deploy.s.sol
   lib/           forge-std + openzeppelin-contracts (vendored, gitignored)
@@ -177,7 +215,7 @@ crates/
   local_llm/     HF model fetch, sandboxed llama-server, OpenAI-compat client
   protocol/      Wire types (Rust source of truth) + canonical signing payloads
 packages/
-  chains/        Per-chain addresses (USDC, registry, escrow), TS consumers
+  chains/        Per-chain addresses (USDC, registry, channel), TS consumers
   flodex-client/ Shared TS transport (CLI + dashboard)
   protocol/      Re-exports ts-rs–generated types
 fly.toml         Fly.io config for hosted coordinator

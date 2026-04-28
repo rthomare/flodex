@@ -29,7 +29,7 @@ export default function OnChainStatus({ chainId }: { chainId: number }) {
       </div>
       <div className="space-y-0.5">
         <Row label="registry" value={shortAddr(cfg.addresses.registry)} href={explorer} />
-        <Row label="escrow" value={shortAddr(cfg.addresses.escrow)} />
+        <Row label="channel" value={shortAddr(cfg.addresses.channel)} />
         <Row label="usdc" value={shortAddr(cfg.addresses.usdc)} />
         <Row
           label="registered"

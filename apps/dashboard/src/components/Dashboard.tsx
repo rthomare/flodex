@@ -6,13 +6,20 @@ import {
   runAgentLoop,
   type ToolHandlerMap,
 } from "@flodex/client-lib";
-import type { BackendType, NodeRegistration } from "@flodex/protocol";
+import type {
+  BackendType,
+  NodeRegistration,
+  NodeSignedReceipt,
+} from "@flodex/protocol";
 import { useNodes } from "@/hooks/useNodes";
 import {
   useNodeActivity,
   type NodeActivityEntry,
 } from "@/hooks/useNodeActivity";
 import { useTheme } from "@/hooks/useTheme";
+import { useChannel } from "@/hooks/useChannel";
+import { ethAddressFromCompressed } from "@/lib/eth";
+import { FLODEX_CHAIN_ID } from "@/lib/wagmi";
 import { addUsage, makeLocalSession, type SessionRecord } from "@/lib/events";
 import NodeGraph, { type ActiveRequest } from "./NodeGraph";
 import RequestForm from "./RequestForm";
@@ -20,6 +27,7 @@ import Timeline from "./Timeline";
 import CostPanel from "./CostPanel";
 import SessionDetail from "./SessionDetail";
 import OnChainStatus from "./OnChainStatus";
+import ChannelPanel from "./ChannelPanel";
 import { DEFAULT_CHAIN_ID } from "@/lib/chain";
 
 // In-browser tool handlers. Local-fs tools don't work from a browser tab,
@@ -84,6 +92,22 @@ export default function Dashboard() {
     [nodes, selectedPubKey],
   );
 
+  const selectedNodeAddress = useMemo(
+    () => (selectedNode ? ethAddressFromCompressed(selectedNode.identityPubkey) : null),
+    [selectedNode],
+  );
+
+  const channel = useChannel({
+    nodeAddress: selectedNodeAddress,
+    chainId: FLODEX_CHAIN_ID,
+  });
+
+  // Most-recent NodeSignedReceipt observed per node (keyed by X25519 publicKey).
+  // The user signs the relevant entry via ChannelPanel before cooperativeClose.
+  const [latestReceiptByNode, setLatestReceiptByNode] = useState<
+    Record<string, NodeSignedReceipt>
+  >({});
+
   function patchLocal(sessionId: string, fn: (s: SessionRecord) => SessionRecord) {
     setLocalSessions((prev) =>
       prev.map((s) => (s.sessionId === sessionId ? fn(s) : s)),
@@ -117,9 +141,11 @@ export default function Dashboard() {
       });
 
       const matchedNode = nodes.find((n) => n.publicKey === match.publicKey);
-      const pricePer1k =
-        matchedNode?.pricing.find((p) => p.backend === args.backend)?.pricePer1k ??
-        0;
+      const pricePer1kUnits = matchedNode?.pricing.find(
+        (p) => p.backend === args.backend,
+      )?.pricePer1k;
+      // Convert raw USDC base units (6 decimals) → dollars per 1k for the UI.
+      const pricePer1k = pricePer1kUnits ? Number(pricePer1kUnits) / 1_000_000 : 0;
 
       patchLocal(sessionId, (s) => ({
         ...s,
@@ -129,6 +155,20 @@ export default function Dashboard() {
       }));
 
       const nodePub = base64.decode(match.publicKey);
+      // Attach the current channel id only when the matched node is the
+      // node the user has a channel with (selected). Otherwise this
+      // request runs free.
+      const channelId =
+        selectedPubKey === match.publicKey && channel.state?.channelId
+          ? channel.state.channelId
+          : undefined;
+
+      // Auto-sign every receipt as it arrives when the wallet is connected
+      // and the request is bound to *this* channel. Bounds bad-debt to a
+      // single round trip instead of the whole agent run.
+      const signAck =
+        channelId && channel.ready ? channel.signReceipt : undefined;
+
       await runAgentLoop({
         nodeUrl: match.url,
         nodePub,
@@ -136,6 +176,8 @@ export default function Dashboard() {
         sessionId,
         prompt: args.prompt,
         tools: browserTools,
+        channelId,
+        signAck,
         onEvent: (ev) => {
           const t = Date.now();
           if (ev.kind === "toolCallStart") {
@@ -183,6 +225,11 @@ export default function Dashboard() {
               stepCount: s.stepCount + 1,
               lastUpdate: t,
               actualUsage: addUsage(s.actualUsage, usage),
+            }));
+          } else if (ev.kind === "receipt") {
+            setLatestReceiptByNode((prev) => ({
+              ...prev,
+              [match.publicKey]: ev.receipt,
             }));
           }
         },
@@ -256,6 +303,11 @@ export default function Dashboard() {
       <aside className="pointer-events-auto absolute bottom-20 right-4 top-20 z-10 flex w-80 flex-col gap-3 overflow-y-auto">
         <OnChainStatus chainId={DEFAULT_CHAIN_ID} />
         <CostPanel sessions={sessions} />
+        <ChannelPanel
+          node={selectedNode}
+          channel={channel}
+          latestReceipt={selectedNode ? latestReceiptByNode[selectedNode.publicKey] ?? null : null}
+        />
         <SessionDetail session={selectedSession} />
       </aside>
 
@@ -297,7 +349,11 @@ function NodeDetail({
       <div className="mt-2 border-t border-fg/10 pt-2">
         <div className="mb-1 text-fg/50">pricing ($/1K)</div>
         {node.pricing.map((p) => (
-          <Row key={p.backend} label={p.backend} value={p.pricePer1k.toFixed(4)} />
+          <Row
+            key={p.backend}
+            label={p.backend}
+            value={(Number(p.pricePer1k) / 1_000_000).toFixed(4)}
+          />
         ))}
       </div>
     </div>

@@ -5,7 +5,8 @@
   "workspaces": [
     "apps/client",
     "apps/dashboard",
-    "packages/*"
+    "packages/*",
+    "tests/e2e"
   ],
   "scripts": {
     "dev": "./scripts/dev.sh",
@@ -13,6 +14,7 @@
     "deploy": "./scripts/deploy.sh",
     "dash": "bun run --cwd apps/dashboard dev",
     "client": "bun run --cwd apps/client start",
-    "gen:types": "cargo test -p protocol export_bindings --quiet"
+    "gen:types": "cargo test -p protocol export_bindings --quiet",
+    "test:e2e": "bun run --cwd tests/e2e test"
   }
 }

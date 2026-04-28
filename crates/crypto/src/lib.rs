@@ -14,16 +14,22 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use k256::ecdsa::{
     signature::{hazmat::PrehashVerifier, hazmat::PrehashSigner},
-    Signature, SigningKey, VerifyingKey,
+    RecoveryId, Signature, SigningKey, VerifyingKey,
 };
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub const NONCE_SIZE: usize = 24;
 pub const KEY_SIZE: usize = 32;
 pub const IDENTITY_PUBKEY_SIZE: usize = 33; // secp256k1 compressed
 pub const IDENTITY_SIG_SIZE: usize = 64; // ECDSA r||s, big-endian
+pub const ETH_ADDRESS_SIZE: usize = 20;
+pub const EIP191_SIG_SIZE: usize = 65; // r||s||v, v in {27,28}
+pub const ETH_TX_SIG_SIZE: usize = 65; // r||s||v, v in {0,1} (EIP-1559)
+
+const EIP191_PREFIX: &[u8] = b"\x19Ethereum Signed Message:\n32";
 
 const HKDF_INFO: &[u8] = b"flodex-v0-session-key";
 
@@ -94,6 +100,45 @@ impl NodeIdentity {
         out.copy_from_slice(&bytes);
         out
     }
+
+    /// Sign `message` with the EIP-191 prefix (`"\x19Ethereum Signed Message:\n32"`)
+    /// after keccak256-hashing — the format `ECDSA.recover` expects on-chain.
+    /// Returns 65 bytes `r||s||v` with `v ∈ {27, 28}`.
+    pub fn sign_eip191(&self, message: &[u8]) -> [u8; EIP191_SIG_SIZE] {
+        let digest = eip191_digest(message);
+        let (sig, recid): (Signature, RecoveryId) = self
+            .signing
+            .sign_prehash_recoverable(&digest)
+            .expect("signing a valid prehash cannot fail");
+        let sig_bytes = sig.to_bytes();
+        let mut out = [0u8; EIP191_SIG_SIZE];
+        out[..IDENTITY_SIG_SIZE].copy_from_slice(&sig_bytes);
+        out[IDENTITY_SIG_SIZE] = recid.to_byte() + 27;
+        out
+    }
+
+    /// Ethereum address derived from this identity's secp256k1 public key —
+    /// `keccak256(uncompressed_pub[1..])[12..]`. Same address that goes
+    /// on-chain as `msg.sender` when the node calls `register()`.
+    pub fn eth_address(&self) -> [u8; ETH_ADDRESS_SIZE] {
+        eth_address_from_verifying_key(self.signing.verifying_key())
+    }
+
+    /// Sign a precomputed 32-byte digest (caller hashed already). Returns
+    /// 65 bytes `r||s||v` with `v ∈ {0, 1}` — the parity byte EIP-1559
+    /// transactions encode in their RLP signature field. NOT the +27 form
+    /// EIP-191 / EIP-155 use.
+    pub fn sign_eth_tx_digest(&self, digest: &[u8; 32]) -> [u8; ETH_TX_SIG_SIZE] {
+        let (sig, recid): (Signature, RecoveryId) = self
+            .signing
+            .sign_prehash_recoverable(digest)
+            .expect("signing a valid prehash cannot fail");
+        let bytes = sig.to_bytes();
+        let mut out = [0u8; ETH_TX_SIG_SIZE];
+        out[..IDENTITY_SIG_SIZE].copy_from_slice(&bytes);
+        out[IDENTITY_SIG_SIZE] = recid.to_byte();
+        out
+    }
 }
 
 /// Verify a 64-byte ECDSA signature over `message` against a 33-byte
@@ -116,6 +161,52 @@ pub fn verify_identity_signature(
     };
     let hash = Sha256::digest(message);
     verifying.verify_prehash(&hash, &sig).is_ok()
+}
+
+/// keccak256 over arbitrary bytes. Distinct from SHA-256 — used for
+/// Ethereum-flavored hashing (EIP-191, `abi.encode` digests, address derivation).
+pub fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Keccak256::digest(bytes));
+    out
+}
+
+/// `keccak256("\x19Ethereum Signed Message:\n32" || keccak256(message))`.
+/// This is the digest `ECDSA.recover` expects in OpenZeppelin's library.
+pub fn eip191_digest(message: &[u8]) -> [u8; 32] {
+    let inner = keccak256(message);
+    let mut hasher = Keccak256::new();
+    Digest::update(&mut hasher, EIP191_PREFIX);
+    Digest::update(&mut hasher, &inner);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hasher.finalize());
+    out
+}
+
+/// Recover the Ethereum address that signed `message` (EIP-191 envelope). The
+/// signature is 65 bytes `r||s||v` with `v ∈ {27, 28}` — exactly what
+/// `NodeIdentity::sign_eip191` produces.
+pub fn recover_eip191(message: &[u8], sig: &[u8; EIP191_SIG_SIZE]) -> Result<[u8; ETH_ADDRESS_SIZE]> {
+    let digest = eip191_digest(message);
+    let v = sig[IDENTITY_SIG_SIZE];
+    let recid_byte = v.checked_sub(27).ok_or_else(|| anyhow!("invalid v: {v}"))?;
+    let recid = RecoveryId::from_byte(recid_byte)
+        .ok_or_else(|| anyhow!("invalid recovery id: {recid_byte}"))?;
+    let signature = Signature::from_slice(&sig[..IDENTITY_SIG_SIZE])
+        .map_err(|e| anyhow!("invalid signature bytes: {e}"))?;
+    let verifying = VerifyingKey::recover_from_prehash(&digest, &signature, recid)
+        .map_err(|e| anyhow!("recovery failed: {e}"))?;
+    Ok(eth_address_from_verifying_key(&verifying))
+}
+
+fn eth_address_from_verifying_key(vk: &VerifyingKey) -> [u8; ETH_ADDRESS_SIZE] {
+    let point = vk.to_encoded_point(false); // 0x04 || X(32) || Y(32) = 65 bytes
+    let bytes = point.as_bytes();
+    debug_assert_eq!(bytes.len(), 65);
+    let hash = keccak256(&bytes[1..]);
+    let mut addr = [0u8; ETH_ADDRESS_SIZE];
+    addr.copy_from_slice(&hash[12..]);
+    addr
 }
 
 fn rand_seed() -> [u8; KEY_SIZE] {
@@ -206,5 +297,47 @@ mod tests {
         let a = NodeIdentity::generate();
         let b = NodeIdentity::from_seed(a.seed()).unwrap();
         assert_eq!(a.public_compressed(), b.public_compressed());
+    }
+
+    #[test]
+    fn keccak256_known_vector() {
+        // keccak256("") = c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+        let expected = hex::decode(
+            "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+        )
+        .unwrap();
+        assert_eq!(keccak256(b"").to_vec(), expected);
+    }
+
+    #[test]
+    fn eth_address_from_anvil_key() {
+        // Anvil's first dev key — the address is well-known and lets us
+        // sanity-check the keccak / address-derivation path against viem.
+        let seed = hex::decode(
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&seed);
+        let id = NodeIdentity::from_seed(bytes).unwrap();
+        let addr = id.eth_address();
+        assert_eq!(
+            hex::encode(addr),
+            "f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        );
+    }
+
+    #[test]
+    fn eip191_sign_recover_roundtrip() {
+        let id = NodeIdentity::generate();
+        let msg = b"flodex-v0-channel-update-test-payload";
+        let sig = id.sign_eip191(msg);
+        let recovered = recover_eip191(msg, &sig).unwrap();
+        assert_eq!(recovered, id.eth_address());
+        // Tamper with the message — recovery yields a *different* address
+        // (it doesn't fail; that's how ecrecover works), so the equality
+        // check fails.
+        let other = recover_eip191(b"different", &sig).unwrap();
+        assert_ne!(other, id.eth_address());
     }
 }

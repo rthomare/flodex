@@ -1,6 +1,12 @@
-import type { AgentStep, BackendType } from "@flodex/protocol";
-import { sendStep } from "./transport.ts";
-import type { AgentEventHandler, ToolHandlerMap } from "./types.ts";
+import type {
+  AgentResponse,
+  AgentStep,
+  BackendType,
+  ClientAck,
+  NodeSignedReceipt,
+} from "@flodex/protocol";
+import { sendStep, type SendStepResult } from "./transport.ts";
+import type { AgentEventHandler, ToolHandler, ToolHandlerMap } from "./types.ts";
 
 /**
  * Drives the client-side outer loop: send prompt → receive AgentResponse →
@@ -17,19 +23,38 @@ export async function runAgentLoop(args: {
   prompt: string;
   tools: ToolHandlerMap;
   onEvent?: AgentEventHandler;
+  /** When set, every request carries this channel id; receipts come back. */
+  channelId?: `0x${string}`;
+  /** Optional ack signer. Called on each receipt; returned ack is queued
+   *  for the next request's `prev_ack`. Without it, the node receives no
+   *  acks until the dashboard posts one explicitly via `postAck`. */
+  signAck?: (receipt: NodeSignedReceipt) => Promise<ClientAck>;
 }): Promise<string> {
-  const { nodeUrl, nodePub, backend, sessionId, prompt, tools, onEvent } = args;
+  const { nodeUrl, nodePub, backend, sessionId, prompt, tools, onEvent, channelId, signAck } =
+    args;
 
   let step: AgentStep = { type: "prompt", prompt };
   let attempt = 0;
+  let prevAck: ClientAck | undefined;
 
   while (true) {
     attempt += 1;
     onEvent?.({ kind: "requestStart", sessionId, attempt });
 
-    let response;
+    let response: AgentResponse;
+    let receipt: NodeSignedReceipt | undefined;
     try {
-      response = await sendStep(nodeUrl, backend, nodePub, sessionId, step);
+      const result: SendStepResult = await sendStep({
+        nodeUrl,
+        backend,
+        nodePub,
+        sessionId,
+        step,
+        channelId,
+        prevAck,
+      });
+      response = result.response;
+      receipt = result.receipt;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       onEvent?.({ kind: "error", sessionId, message });
@@ -38,13 +63,27 @@ export async function runAgentLoop(args: {
 
     onEvent?.({ kind: "response", sessionId, response });
 
+    if (receipt) {
+      let ack: ClientAck | undefined;
+      if (signAck) {
+        try {
+          ack = await signAck(receipt);
+          prevAck = ack;
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          onEvent?.({ kind: "error", sessionId, message: `signAck: ${message}` });
+        }
+      }
+      onEvent?.({ kind: "receipt", sessionId, receipt, ack });
+    }
+
     if (response.type === "final") {
       onEvent?.({ kind: "final", sessionId, content: response.content });
       return response.content;
     }
 
     // toolCall
-    const handler = tools[response.name];
+    const handler: ToolHandler | undefined = tools[response.name];
     onEvent?.({
       kind: "toolCallStart",
       sessionId,
@@ -52,7 +91,7 @@ export async function runAgentLoop(args: {
       input: response.input,
     });
 
-    const result = handler
+    const result: { content: string; isError: boolean } = handler
       ? await handler(response.input)
       : {
           content: `unknown client tool: ${response.name}`,

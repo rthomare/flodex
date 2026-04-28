@@ -1,4 +1,5 @@
 mod chains;
+mod eth;
 mod identity;
 
 use agent::{
@@ -15,15 +16,19 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crypto::{
-    decrypt, derive_key, encrypt, random_nonce_hex, NodeIdentity, NodeKeys,
+    decrypt, derive_key, encrypt, random_nonce_hex, recover_eip191, NodeIdentity, NodeKeys,
+    EIP191_SIG_SIZE, ETH_ADDRESS_SIZE,
 };
 use execution::{ExecutionBackend, LocalLlmBackend, MockTeeBackend};
 use local_llm::{default_cache_dir, resolve, LlamaServer, ModelSpec, OpenAiProvider};
 use protocol::{
-    canonical_heartbeat_bytes, canonical_register_bytes, AgentResponse, AgentStep, BackendPrice,
-    BackendType, EncryptedRequest, EncryptedResponse, NodeActivityReport, NodeHeartbeat, NodeInfo,
-    NodeRegistration, RequestRecord, RequestStatus,
+    canonical_bid_bytes, canonical_heartbeat_bytes, canonical_register_bytes, channel_id_from_hex,
+    channel_update_canonical_for, AgentResponse, AgentStep, BackendPrice, BackendType, Bid,
+    ChannelUpdate, ClientAck, EncryptedRequest, EncryptedResponse, NodeActivityReport,
+    NodeHeartbeat, NodeInfo, NodeRegistration, NodeSignedReceipt, ReceiptBreakdown, RequestRecord,
+    RequestStatus, Usage,
 };
+use crate::chains::ChainConfig;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,6 +54,33 @@ struct AppState {
     /// which sessions are in flight, their elapsed time, tool calls, etc.,
     /// regardless of who initiated the request.
     activity: Arc<ActivityLog>,
+    /// Per-backend pricing (raw USDC base units per 1k tokens) the node
+    /// quoted at startup. Used to value each round trip's Usage when
+    /// building a channel receipt.
+    pricing: Vec<BackendPrice>,
+    /// Resolved from FLODEX_CHAIN_ID. None ⇒ off-chain only mode; channel
+    /// receipts are skipped.
+    chain: Option<ChainConfig>,
+    /// Per-channel cumulative state. Keyed by 32-byte channel id. v0 is
+    /// in-memory only; if the node restarts mid-channel, the dashboard
+    /// falls back to challengeClose with the latest state it co-signed.
+    channels: Arc<Mutex<HashMap<[u8; 32], ChannelState>>>,
+}
+
+/// Per-channel state the node accumulates as requests come in.
+#[derive(Debug, Clone)]
+struct ChannelState {
+    /// Most recent nonce the node has signed for this channel.
+    nonce: u64,
+    /// Most recent cumOwed the node has signed (raw USDC base units).
+    cum_owed: u128,
+    /// Latest bilaterally-signed (client + node) state. What the node would
+    /// submit on `cooperativeClose`. None until the first ack arrives — at
+    /// most one round trip's worth of bad debt at any moment.
+    last_acked: Option<ClientAck>,
+    /// Client's Ethereum address, learned on the first ack and asserted
+    /// constant thereafter. None until the first ack.
+    client_address: Option<[u8; ETH_ADDRESS_SIZE]>,
 }
 
 const ACTIVITY_RETENTION_MS: i64 = 30_000;
@@ -183,6 +215,16 @@ async fn main() -> Result<()> {
     let identity_path = identity::default_path()?;
     let (keys, identity) = identity::load_or_generate(&identity_path)?;
 
+    let mut backends: Vec<BackendType> = Vec::new();
+    if mock_tee.is_some() {
+        backends.push(BackendType::MockTee);
+    }
+    if local_llm.is_some() {
+        backends.push(BackendType::Local);
+    }
+    let pricing = read_pricing(&backends);
+    let chain = chains::from_env();
+
     let state = Arc::new(AppState {
         keys,
         identity,
@@ -190,15 +232,10 @@ async fn main() -> Result<()> {
         local_llm,
         _llama_server: llama_server,
         activity: Arc::new(ActivityLog::new()),
+        pricing: pricing.clone(),
+        chain,
+        channels: Arc::new(Mutex::new(HashMap::new())),
     });
-
-    let mut backends: Vec<BackendType> = Vec::new();
-    if state.mock_tee.is_some() {
-        backends.push(BackendType::MockTee);
-    }
-    if state.local_llm.is_some() {
-        backends.push(BackendType::Local);
-    }
     let identity_pubkey_hex = hex::encode(state.identity.public_compressed());
     tracing::info!(
         backends = ?backends,
@@ -207,40 +244,62 @@ async fn main() -> Result<()> {
         "flodex node ready"
     );
 
-    if let Some(chain) = chains::from_env() {
+    if let Some(ref chain) = state.chain {
         tracing::info!(
             chain = %chain.name,
             chain_id = chain.chain_id,
             registry = ?chain.registry,
-            escrow = ?chain.escrow,
+            channel = ?chain.channel,
             usdc = %chain.usdc,
+            eth_address = %format_args!("0x{}", hex::encode(state.identity.eth_address())),
             "chain config loaded"
         );
+    }
+
+    let addr = std::env::var("FLODEX_NODE_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
+    let advertise_url =
+        std::env::var("FLODEX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
+    let max_tokens = std::env::var("FLODEX_NODE_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100_000u32);
+
+    // Auto-register on-chain if we have a chain + registry. Runs in the
+    // background so node startup isn't blocked by an unhealthy RPC.
+    if let Some(ref chain) = state.chain {
+        if let Some(registry_hex) = chain.registry {
+            spawn_register(
+                state.clone(),
+                chain.chain_id,
+                chains::rpc_url(chain),
+                chain.usdc.to_string(),
+                registry_hex.to_string(),
+                advertise_url.clone(),
+                backends.clone(),
+                max_tokens,
+                pricing.clone(),
+            );
+        }
     }
 
     let app = Router::new()
         .route("/info", get(info))
         .route("/activity", get(activity))
         .route("/execute", post(execute))
+        .route("/ack", post(ack))
         .route("/proxy/complete", post(proxy_complete))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
-    let addr = std::env::var("FLODEX_NODE_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
-    let advertise_url =
-        std::env::var("FLODEX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
-
     if let Ok(coord_url) = std::env::var("FLODEX_COORDINATOR") {
-        let max_tokens = std::env::var("FLODEX_NODE_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(100_000);
-        let pricing = read_pricing(&backends);
         let ecdh_pubkey_b64 = B64.encode(state.keys.public.as_bytes());
+        let backends_for_bids = backends.clone();
+        let pricing_for_bids = pricing.clone();
+        let identity_for_bids = identity_pubkey_hex.clone();
 
         tokio::spawn(registration_loop(
-            coord_url,
+            coord_url.clone(),
             state.clone(),
             RegistrationConfig {
                 identity_pubkey: identity_pubkey_hex,
@@ -251,6 +310,18 @@ async fn main() -> Result<()> {
                 pricing,
             },
         ));
+
+        // Standing-offer bid broadcaster — refreshes every 60s, each bid
+        // valid for 180s. Lets the coordinator's lowest-bid matcher pick us
+        // even when registrations have stale prices.
+        tokio::spawn(bid_loop(
+            coord_url,
+            state.clone(),
+            identity_for_bids,
+            backends_for_bids,
+            max_tokens,
+            pricing_for_bids,
+        ));
     }
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -259,6 +330,75 @@ async fn main() -> Result<()> {
     tracing::info!("flodex node listening on http://{addr}");
     axum::serve(listener, app).await.expect("serve");
     Ok(())
+}
+
+/// Stake amount the node will lock when calling `register()`. Defaults to
+/// 100 USDC = 100_000_000 base units; override with `FLODEX_NODE_STAKE` (raw
+/// USDC base units, decimal).
+fn read_stake() -> u128 {
+    std::env::var("FLODEX_NODE_STAKE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100_000_000)
+}
+
+fn spawn_register(
+    state: Arc<AppState>,
+    chain_id: u64,
+    rpc_url: String,
+    usdc_hex: String,
+    registry_hex: String,
+    advertise_url: String,
+    backends: Vec<BackendType>,
+    max_tokens: u32,
+    pricing: Vec<BackendPrice>,
+) {
+    let usdc = match parse_addr(&usdc_hex) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("auto-register skipped — bad USDC address {usdc_hex}: {e}");
+            return;
+        }
+    };
+    let registry = match parse_addr(&registry_hex) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("auto-register skipped — bad registry address {registry_hex}: {e}");
+            return;
+        }
+    };
+    let ecdh_pubkey: [u8; 32] = *state.keys.public.as_bytes();
+    let bitmap = eth::backend_bitmap(&backends);
+    let price_array = match eth::pricing_to_array(&pricing) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("auto-register skipped — invalid pricing: {e}");
+            return;
+        }
+    };
+    let stake = eth::u256_from_u128(read_stake());
+
+    let params = eth::RegisterParams {
+        rpc_url,
+        chain_id,
+        usdc,
+        registry,
+        url: advertise_url,
+        ecdh_pubkey,
+        backend_bitmap: bitmap,
+        max_tokens: max_tokens as u64,
+        price_per_1k: price_array,
+        stake,
+    };
+
+    tokio::spawn(async move {
+        if let Err(e) = eth::ensure_registered(&state.identity, params).await {
+            tracing::warn!(
+                "auto-register failed: {e:#}. Falling back to manual flow — \
+                 see README \"Register a node on-chain\"."
+            );
+        }
+    });
 }
 
 fn read_pricing(backends: &[BackendType]) -> Vec<BackendPrice> {
@@ -271,13 +411,17 @@ fn read_pricing(backends: &[BackendType]) -> Vec<BackendPrice> {
                 BackendType::Fhe => "FLODEX_NODE_PRICE_FHE",
                 BackendType::Mcp => "FLODEX_NODE_PRICE_MCP",
             };
-            let price = std::env::var(env_key)
+            // Env var is a float in USDC dollars per 1k tokens (e.g. "0.015"),
+            // converted to raw USDC base units (6 decimals) for protocol +
+            // on-chain parity. So 0.015 → 15000 base units.
+            let price_dollars: f64 = std::env::var(env_key)
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0.0);
+            let price_units = (price_dollars * 1_000_000.0) as u128;
             BackendPrice {
                 backend: *b,
-                price_per_1k: price,
+                price_per_1k: price_units.to_string(),
             }
         })
         .collect()
@@ -317,6 +461,71 @@ fn signed_heartbeat(state: &AppState, identity_pubkey: &str) -> NodeHeartbeat {
     let canonical = canonical_heartbeat_bytes(&hb);
     hb.signature = hex::encode(state.identity.sign(&canonical));
     hb
+}
+
+/// Build + sign a standing-offer bid for a single backend.
+fn signed_bid(
+    state: &AppState,
+    identity_pubkey: &str,
+    backend: BackendType,
+    pricing: &[BackendPrice],
+    max_tokens: u32,
+    valid_for_secs: u64,
+) -> Option<Bid> {
+    let price = pricing
+        .iter()
+        .find(|p| p.backend == backend)
+        .map(|p| p.price_per_1k.clone())?;
+    let valid_until = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs()
+        .saturating_add(valid_for_secs);
+    let mut bid = Bid {
+        identity_pubkey: identity_pubkey.to_string(),
+        backend,
+        price_per_1k: price,
+        max_tokens,
+        valid_until,
+        nonce: random_nonce_hex(),
+        signature: String::new(),
+    };
+    let canonical = canonical_bid_bytes(&bid);
+    bid.signature = hex::encode(state.identity.sign(&canonical));
+    Some(bid)
+}
+
+async fn bid_loop(
+    coord_url: String,
+    state: Arc<AppState>,
+    identity_pubkey: String,
+    backends: Vec<BackendType>,
+    max_tokens: u32,
+    pricing: Vec<BackendPrice>,
+) {
+    const REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+    const VALID_FOR: u64 = 180; // 3× refresh — survives one missed POST.
+    let http = reqwest::Client::new();
+    let bids_url = format!("{coord_url}/bids");
+
+    loop {
+        for backend in &backends {
+            let Some(bid) = signed_bid(&state, &identity_pubkey, *backend, &pricing, max_tokens, VALID_FOR)
+            else {
+                continue;
+            };
+            match http.post(&bids_url).json(&bid).send().await {
+                Ok(r) if r.status().is_success() => {
+                    tracing::debug!(backend = ?backend, "bid posted");
+                }
+                Ok(r) => {
+                    tracing::warn!(status = %r.status(), backend = ?backend, "bid rejected");
+                }
+                Err(e) => tracing::warn!("bid post failed: {e}"),
+            }
+        }
+        tokio::time::sleep(REFRESH).await;
+    }
 }
 
 async fn registration_loop(
@@ -472,6 +681,21 @@ async fn execute(
         }
     };
 
+    // Build a node-signed channel receipt iff the request was channel-bound.
+    // Failure here aborts the request — better to surface "your channel
+    // is misconfigured" loudly than silently hand back a free response.
+    let receipt = match req.channel_id.as_deref() {
+        Some(id_hex) => Some(build_receipt(
+            &state,
+            id_hex,
+            req.backend,
+            req.session_id.as_str(),
+            usage_of(&agent_response),
+            req.prev_ack.as_ref(),
+        )?),
+        None => None,
+    };
+
     let resp_bytes = serde_json::to_vec(&agent_response)
         .map_err(|e| ApiError::Internal(format!("serialize response: {e}")))?;
     let (resp_nonce, resp_ct) =
@@ -484,7 +708,185 @@ async fn execute(
         session_id,
         nonce: B64.encode(resp_nonce),
         ciphertext: B64.encode(resp_ct),
+        receipt,
     }))
+}
+
+fn usage_of(resp: &AgentResponse) -> Usage {
+    match resp {
+        AgentResponse::Final { usage, .. } => *usage,
+        AgentResponse::ToolCall { usage, .. } => *usage,
+    }
+}
+
+/// Cost-account a round trip against the channel and produce a node-signed
+/// receipt over the freshly-bumped cumulative state.
+fn build_receipt(
+    state: &AppState,
+    channel_id_hex: &str,
+    backend: BackendType,
+    session_id: &str,
+    usage: Usage,
+    prev_ack: Option<&ClientAck>,
+) -> Result<NodeSignedReceipt, ApiError> {
+    let chain = state
+        .chain
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("channel_id supplied but FLODEX_CHAIN_ID is unset".into()))?;
+    let channel_addr_hex = chain
+        .channel
+        .ok_or_else(|| ApiError::BadRequest("channel_id supplied but no channel contract on this chain".into()))?;
+    let channel_addr = parse_addr(channel_addr_hex)
+        .map_err(|e| ApiError::Internal(format!("invalid channel address in chain config: {e}")))?;
+    let channel_id = channel_id_from_hex(channel_id_hex)
+        .map_err(|e| ApiError::BadRequest(format!("invalid channel_id: {e}")))?;
+
+    let price_units = price_for(&state.pricing, backend);
+    let total_tokens = total_tokens(&usage);
+    let round_trip_cost = (u128::from(total_tokens) * price_units) / 1_000;
+
+    let mut channels = state.channels.lock().unwrap();
+    let entry = channels.entry(channel_id).or_insert_with(|| ChannelState {
+        nonce: 0,
+        cum_owed: 0,
+        last_acked: None,
+        client_address: None,
+    });
+
+    // Verify any piggy-backed ack against this channel before we bump state.
+    if let Some(ack) = prev_ack {
+        verify_and_record_ack(entry, ack, channel_id_hex, chain.chain_id, &channel_addr)
+            .map_err(|e| ApiError::BadRequest(format!("invalid prev_ack: {e}")))?;
+    }
+
+    let new_nonce = entry.nonce.saturating_add(1);
+    let new_cum_owed = entry.cum_owed.saturating_add(round_trip_cost);
+
+    let update = ChannelUpdate {
+        channel_id: channel_id_hex.to_string(),
+        nonce: new_nonce,
+        cum_owed: new_cum_owed.to_string(),
+    };
+    let canonical = channel_update_canonical_for(&update, chain.chain_id, &channel_addr)
+        .map_err(|e| ApiError::Internal(format!("canonical bytes: {e}")))?;
+    let sig = state.identity.sign_eip191(&canonical);
+    let node_sig = format!("0x{}", hex::encode(sig));
+
+    entry.nonce = new_nonce;
+    entry.cum_owed = new_cum_owed;
+
+    let breakdown = ReceiptBreakdown {
+        session_id: session_id.to_string(),
+        backend,
+        usage,
+        price_per_1k: price_units.to_string(),
+        round_trip_cost: round_trip_cost.to_string(),
+    };
+
+    Ok(NodeSignedReceipt {
+        update,
+        breakdown,
+        node_sig,
+    })
+}
+
+fn verify_and_record_ack(
+    entry: &mut ChannelState,
+    ack: &ClientAck,
+    expected_channel_id_hex: &str,
+    chain_id: u64,
+    channel_addr: &[u8; 20],
+) -> Result<()> {
+    if ack.update.channel_id.to_lowercase().trim_start_matches("0x")
+        != expected_channel_id_hex.to_lowercase().trim_start_matches("0x")
+    {
+        return Err(anyhow!("ack channel_id mismatch"));
+    }
+    let canonical = channel_update_canonical_for(&ack.update, chain_id, channel_addr)?;
+    let sig_hex = ack.client_sig.trim_start_matches("0x");
+    let sig_bytes = hex::decode(sig_hex)?;
+    if sig_bytes.len() != EIP191_SIG_SIZE {
+        return Err(anyhow!(
+            "client_sig must be {EIP191_SIG_SIZE} bytes, got {}",
+            sig_bytes.len()
+        ));
+    }
+    let mut sig: [u8; EIP191_SIG_SIZE] = [0u8; EIP191_SIG_SIZE];
+    sig.copy_from_slice(&sig_bytes);
+    let recovered = recover_eip191(&canonical, &sig)?;
+
+    match entry.client_address {
+        Some(known) if known != recovered => {
+            return Err(anyhow!("ack signer address differs from channel client"));
+        }
+        _ => entry.client_address = Some(recovered),
+    }
+
+    if ack.update.nonce >= entry.nonce {
+        // The dashboard could in principle ack a future nonce; that's
+        // harmless — we still record it as the latest bilaterally signed.
+    }
+    entry.last_acked = Some(ack.clone());
+    Ok(())
+}
+
+fn parse_addr(s: &str) -> Result<[u8; 20]> {
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    let bytes = hex::decode(stripped)?;
+    if bytes.len() != 20 {
+        return Err(anyhow!("address must be 20 bytes, got {}", bytes.len()));
+    }
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn price_for(pricing: &[BackendPrice], backend: BackendType) -> u128 {
+    pricing
+        .iter()
+        .find(|p| p.backend == backend)
+        .and_then(|p| p.price_per_1k.parse::<u128>().ok())
+        .unwrap_or(0)
+}
+
+fn total_tokens(usage: &Usage) -> u64 {
+    let cache_creation = usage.cache_creation_input_tokens.unwrap_or(0);
+    let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
+    u64::from(usage.input_tokens)
+        + u64::from(usage.output_tokens)
+        + u64::from(cache_creation)
+        + u64::from(cache_read)
+}
+
+/// Standalone client co-signature ingestion. Called by the dashboard before
+/// `cooperativeClose` to deposit the ack on the *last* request (which has
+/// no following request to piggyback on).
+async fn ack(
+    State(state): State<Arc<AppState>>,
+    Json(ack): Json<ClientAck>,
+) -> Result<StatusCode, ApiError> {
+    let chain = state
+        .chain
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("FLODEX_CHAIN_ID unset — channels disabled".into()))?;
+    let channel_addr_hex = chain
+        .channel
+        .ok_or_else(|| ApiError::BadRequest("no channel contract on this chain".into()))?;
+    let channel_addr = parse_addr(channel_addr_hex)
+        .map_err(|e| ApiError::Internal(format!("invalid channel address: {e}")))?;
+    let channel_id = channel_id_from_hex(&ack.update.channel_id)
+        .map_err(|e| ApiError::BadRequest(format!("invalid channel_id: {e}")))?;
+
+    let mut channels = state.channels.lock().unwrap();
+    let entry = channels.entry(channel_id).or_insert_with(|| ChannelState {
+        nonce: 0,
+        cum_owed: 0,
+        last_acked: None,
+        client_address: None,
+    });
+    verify_and_record_ack(entry, &ack, &ack.update.channel_id, chain.chain_id, &channel_addr)
+        .map_err(|e| ApiError::BadRequest(format!("invalid ack: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Stateless completion passthrough used by the Claude Code proxy. Same
@@ -543,6 +945,7 @@ async fn proxy_complete(
         session_id: req.session_id,
         nonce: B64.encode(resp_nonce),
         ciphertext: B64.encode(resp_ct),
+        receipt: None,
     }))
 }
 

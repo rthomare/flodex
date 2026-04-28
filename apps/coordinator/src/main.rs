@@ -16,11 +16,11 @@ use axum::{
 use crypto::verify_identity_signature;
 use dashmap::DashMap;
 use protocol::{
-    canonical_heartbeat_bytes, canonical_register_bytes, JobMatch, JobSpec, NodeHeartbeat,
-    NodeRegistration,
+    canonical_bid_bytes, canonical_heartbeat_bytes, canonical_register_bytes, BackendType, Bid,
+    JobMatch, JobSpec, NodeHeartbeat, NodeRegistration,
 };
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -34,6 +34,10 @@ struct Entry {
 
 struct AppState {
     nodes: DashMap<String, Entry>,
+    /// Bid book — keyed by `(identity_pubkey, backend)`. Latest signed bid
+    /// wins; expired bids (`valid_until` < now) are evicted by the GC loop
+    /// and rejected at read time as a defense-in-depth check.
+    bids: DashMap<(String, BackendType), Bid>,
 }
 
 #[tokio::main]
@@ -48,9 +52,11 @@ async fn main() {
 
     let state = Arc::new(AppState {
         nodes: DashMap::new(),
+        bids: DashMap::new(),
     });
 
-    // Background GC: expire nodes whose heartbeats have stopped.
+    // Background GC: expire nodes whose heartbeats have stopped, and bids
+    // past their `valid_until`.
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -64,6 +70,8 @@ async fn main() {
                     }
                     alive
                 });
+                let now_secs = unix_now();
+                state.bids.retain(|_, bid| bid.valid_until > now_secs);
             }
         });
     }
@@ -73,6 +81,7 @@ async fn main() {
         .route("/nodes/heartbeat", post(heartbeat))
         .route("/nodes", get(list_nodes))
         .route("/jobs/match", post(match_job))
+        .route("/bids", post(post_bid).get(list_bids))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -149,38 +158,72 @@ async fn list_nodes(State(state): State<Arc<AppState>>) -> Json<Vec<NodeRegistra
     Json(nodes)
 }
 
+/// Lowest-bid match. Walks the registered node set, prefers each node's
+/// active bid for the requested backend (if present and unexpired) over its
+/// standing registration pricing, then returns whichever candidate has the
+/// lowest effective price within the spec's constraints. Falls back to
+/// first-match when no node has bid (mostly tests / cold-start).
 async fn match_job(
     State(state): State<Arc<AppState>>,
     Json(spec): Json<JobSpec>,
 ) -> Result<Json<JobMatch>, (StatusCode, String)> {
+    let max_units = (spec.max_price_per_1k * 1_000_000.0) as u128;
+    let now_secs = unix_now();
+
+    let mut best: Option<(u128, NodeRegistration, Option<u32>)> = None;
     for entry in state.nodes.iter() {
         let reg = &entry.value().reg;
         if !reg.backends.contains(&spec.backend) {
             continue;
         }
-        if reg.max_tokens < spec.estimated_tokens {
+        // Bid takes precedence over registration pricing when present.
+        let bid = state
+            .bids
+            .get(&(reg.identity_pubkey.clone(), spec.backend))
+            .filter(|b| b.valid_until > now_secs)
+            .map(|b| b.clone());
+        let (price_units, bid_max_tokens) = if let Some(b) = &bid {
+            let Ok(p) = b.price_per_1k.parse::<u128>() else { continue };
+            (p, Some(b.max_tokens))
+        } else {
+            let Some(p_str) = reg
+                .pricing
+                .iter()
+                .find(|p| p.backend == spec.backend)
+                .map(|p| p.price_per_1k.clone())
+            else { continue };
+            let Ok(p) = p_str.parse::<u128>() else { continue };
+            (p, None)
+        };
+        let cap = bid_max_tokens.unwrap_or(reg.max_tokens);
+        if cap < spec.estimated_tokens {
             continue;
         }
-        let price = reg
-            .pricing
-            .iter()
-            .find(|p| p.backend == spec.backend)
-            .map(|p| p.price_per_1k);
-        let Some(price) = price else { continue };
-        if price > spec.max_price_per_1k {
+        if price_units > max_units {
             continue;
         }
+        let take = match &best {
+            None => true,
+            Some((cur, _, _)) => price_units < *cur,
+        };
+        if take {
+            best = Some((price_units, reg.clone(), bid_max_tokens));
+        }
+    }
+
+    if let Some((price, reg, _)) = best {
         tracing::info!(
             pubkey = %reg.public_key,
             backend = ?spec.backend,
-            price,
-            "job matched to node"
+            price_units = price,
+            "job matched to node (lowest bid)"
         );
         return Ok(Json(JobMatch {
-            url: reg.url.clone(),
-            public_key: reg.public_key.clone(),
+            url: reg.url,
+            public_key: reg.public_key,
         }));
     }
+
     Err((
         StatusCode::NOT_FOUND,
         format!(
@@ -188,4 +231,41 @@ async fn match_job(
             spec.backend, spec.estimated_tokens, spec.max_price_per_1k
         ),
     ))
+}
+
+async fn post_bid(
+    State(state): State<Arc<AppState>>,
+    Json(bid): Json<Bid>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    // Validate signature against the node's claimed identity key.
+    let canonical = canonical_bid_bytes(&bid);
+    verify_signed(&bid.identity_pubkey, &bid.signature, &canonical)?;
+    // Reject already-expired bids.
+    if bid.valid_until <= unix_now() {
+        return Err((StatusCode::BAD_REQUEST, "bid already expired"));
+    }
+    // Bid is valid — replace any prior bid for (node, backend).
+    state
+        .bids
+        .insert((bid.identity_pubkey.clone(), bid.backend), bid);
+    Ok(StatusCode::OK)
+}
+
+async fn list_bids(State(state): State<Arc<AppState>>) -> Json<Vec<Bid>> {
+    let now_secs = unix_now();
+    Json(
+        state
+            .bids
+            .iter()
+            .filter(|e| e.value().valid_until > now_secs)
+            .map(|e| e.value().clone())
+            .collect(),
+    )
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }

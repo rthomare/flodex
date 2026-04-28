@@ -8,3 +8,6 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ts-rs.workspace = true
+anyhow.workspace = true
+sha3 = "0.10"
+hex = "0.4"

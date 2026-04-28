@@ -179,6 +179,8 @@ async fn messages(
         nonce: B64.encode(nonce),
         ciphertext: B64.encode(ciphertext),
         backend,
+        channel_id: None,
+        prev_ack: None,
     };
 
     // 4) Send to the matched node's /proxy/complete and decrypt the response.
