@@ -2,8 +2,12 @@
 //! for identity) to a single JSON file. Generated on first startup; loaded on
 //! subsequent runs so node identity is stable across restarts.
 //!
-//! Default path: `$HOME/.flodex/node/identity.json`. Override with
-//! `FLODEX_NODE_IDENTITY_PATH`. File mode is set to 0600 on Unix.
+//! Default path: `$HOME/.fldx/node/identity.json`. Override with
+//! `FLDX_NODE_IDENTITY_PATH`. File mode is set to 0600 on Unix.
+//!
+//! Legacy path `$HOME/.flodex/node/identity.json` is auto-migrated on first
+//! run after the rename so on-chain identity (the secp256k1 address) is
+//! preserved across the rebrand.
 
 use anyhow::{anyhow, Context, Result};
 use crypto::{NodeIdentity, NodeKeys, KEY_SIZE};
@@ -19,14 +23,50 @@ struct OnDiskIdentity {
 }
 
 pub fn default_path() -> Result<PathBuf> {
-    if let Ok(p) = std::env::var("FLODEX_NODE_IDENTITY_PATH") {
+    if let Ok(p) = std::env::var("FLDX_NODE_IDENTITY_PATH") {
         return Ok(PathBuf::from(p));
     }
     let home = dirs::home_dir().ok_or_else(|| anyhow!("could not resolve home dir"))?;
-    Ok(home.join(".flodex").join("node").join("identity.json"))
+    Ok(home.join(".fldx").join("node").join("identity.json"))
+}
+
+/// One-time migration: if the new default path is missing but the legacy
+/// `~/.flodex/node/identity.json` exists, copy it forward. Caller is the only
+/// invoker; safe to call repeatedly. Returns `true` iff a migration ran.
+fn migrate_legacy_identity(target: &Path) -> Result<bool> {
+    if target.exists() {
+        return Ok(false);
+    }
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Ok(false),
+    };
+    let legacy = home.join(".flodex").join("node").join("identity.json");
+    if !legacy.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::copy(&legacy, target).with_context(|| {
+        format!(
+            "migrating legacy identity {} → {}",
+            legacy.display(),
+            target.display()
+        )
+    })?;
+    set_secret_perms(target);
+    tracing::info!(
+        legacy = %legacy.display(),
+        new = %target.display(),
+        "migrated legacy ~/.flodex identity to ~/.fldx — old file left intact",
+    );
+    Ok(true)
 }
 
 pub fn load_or_generate(path: &Path) -> Result<(NodeKeys, NodeIdentity)> {
+    migrate_legacy_identity(path)?;
     if path.exists() {
         load(path)
     } else {

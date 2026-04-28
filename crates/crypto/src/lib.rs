@@ -31,7 +31,7 @@ pub const ETH_TX_SIG_SIZE: usize = 65; // r||s||v, v in {0,1} (EIP-1559)
 
 const EIP191_PREFIX: &[u8] = b"\x19Ethereum Signed Message:\n32";
 
-const HKDF_INFO: &[u8] = b"flodex-v0-session-key";
+const HKDF_INFO: &[u8] = b"fldx-v0-session-key";
 
 pub struct NodeKeys {
     secret: StaticSecret,
@@ -267,9 +267,9 @@ mod tests {
         assert_eq!(node_side, client_side);
 
         let key = derive_key(&node_side, "session-abc");
-        let (nonce, ct) = encrypt(&key, b"hello flodex").unwrap();
+        let (nonce, ct) = encrypt(&key, b"hello fldx").unwrap();
         let pt = decrypt(&key, &nonce, &ct).unwrap();
-        assert_eq!(pt, b"hello flodex");
+        assert_eq!(pt, b"hello fldx");
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
     fn identity_sign_verify() {
         let id = NodeIdentity::generate();
         let pub_compressed = id.public_compressed();
-        let msg = b"flodex-v0-register|some|payload";
+        let msg = b"fldx-v0-register|some|payload";
         let sig = id.sign(msg);
         assert!(verify_identity_signature(&pub_compressed, msg, &sig));
         assert!(!verify_identity_signature(&pub_compressed, b"tampered", &sig));
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn eip191_sign_recover_roundtrip() {
         let id = NodeIdentity::generate();
-        let msg = b"flodex-v0-channel-update-test-payload";
+        let msg = b"fldx-v0-channel-update-test-payload";
         let sig = id.sign_eip191(msg);
         let recovered = recover_eip191(msg, &sig).unwrap();
         assert_eq!(recovered, id.eth_address());

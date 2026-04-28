@@ -1,5 +1,5 @@
 import { createPublicClient, defineChain, http, type PublicClient } from "viem";
-import { getChain, type ChainConfig } from "@flodex/chains";
+import { getChain, type ChainConfig } from "@fldx/chains";
 
 export const DEFAULT_CHAIN_ID = 84532;
 

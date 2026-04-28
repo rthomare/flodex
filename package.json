@@ -1,10 +1,11 @@
 {
-  "name": "flodex",
+  "name": "fldx",
   "private": true,
   "version": "0.0.0",
   "workspaces": [
     "apps/client",
     "apps/dashboard",
+    "apps/marketing",
     "packages/*",
     "tests/e2e"
   ],
@@ -13,6 +14,7 @@
     "dev:kill": "./scripts/dev.sh --kill",
     "deploy": "./scripts/deploy.sh",
     "dash": "bun run --cwd apps/dashboard dev",
+    "site": "bun run --cwd apps/marketing dev",
     "client": "bun run --cwd apps/client start",
     "gen:types": "cargo test -p protocol export_bindings --quiet",
     "test:e2e": "bun run --cwd tests/e2e test"

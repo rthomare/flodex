@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type Theme = "dark" | "light";
-const STORAGE_KEY = "flodex-theme";
+const STORAGE_KEY = "fldx-theme";
 
 function readInitial(): Theme {
   if (typeof document === "undefined") return "dark";

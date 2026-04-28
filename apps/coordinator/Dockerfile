@@ -25,13 +25,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/flodex-coordinator /usr/local/bin/flodex-coordinator
+COPY --from=builder /app/target/release/fldx-coordinator /usr/local/bin/fldx-coordinator
 
 # Sensible defaults; Railway overrides PORT at runtime.
 ENV RUST_LOG=info,tower_http=info
-ENV FLODEX_COORDINATOR_ADDR=0.0.0.0:8000
+ENV FLDX_COORDINATOR_ADDR=0.0.0.0:8000
 EXPOSE 8000
 
 # Bind to whatever Railway hands us via $PORT. Falls back to 8000 for local
 # `docker run`.
-CMD ["/bin/sh", "-c", "FLODEX_COORDINATOR_ADDR=0.0.0.0:${PORT:-8000} /usr/local/bin/flodex-coordinator"]
+CMD ["/bin/sh", "-c", "FLDX_COORDINATOR_ADDR=0.0.0.0:${PORT:-8000} /usr/local/bin/fldx-coordinator"]

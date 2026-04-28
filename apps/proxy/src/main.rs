@@ -1,7 +1,7 @@
-//! flodex Claude Code proxy.
+//! fldx Claude Code proxy.
 //!
 //! Exposes an Anthropic-Messages-compatible `POST /v1/messages` endpoint and
-//! routes each request through the flodex encrypted boundary to a node. The
+//! routes each request through the fldx encrypted boundary to a node. The
 //! proxy keeps a runtime-toggleable `backend` choice (`local` | `mock-tee`)
 //! so a single Claude Code session can swap execution targets without
 //! restart.
@@ -56,9 +56,9 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let coord_url = std::env::var("FLODEX_COORDINATOR")
+    let coord_url = std::env::var("FLDX_COORDINATOR")
         .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
-    let initial_backend = match std::env::var("FLODEX_PROXY_BACKEND")
+    let initial_backend = match std::env::var("FLDX_PROXY_BACKEND")
         .as_deref()
         .unwrap_or("local")
     {
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
         other => {
             tracing::warn!(
                 requested = %other,
-                "FLODEX_PROXY_BACKEND must be `local` or `mock-tee`; defaulting to local"
+                "FLDX_PROXY_BACKEND must be `local` or `mock-tee`; defaulting to local"
             );
             BackendType::Local
         }
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr = std::env::var("FLODEX_PROXY_ADDR").unwrap_or_else(|_| "127.0.0.1:8001".to_string());
+    let addr = std::env::var("FLDX_PROXY_ADDR").unwrap_or_else(|_| "127.0.0.1:8001".to_string());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         addr = %addr,
         coord = %coord_url,
         backend = %backend_label(initial_backend),
-        "flodex claude proxy listening"
+        "fldx claude proxy listening"
     );
     axum::serve(listener, app).await.expect("serve");
     Ok(())
@@ -221,10 +221,10 @@ async fn messages(
     let mut id_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut id_bytes);
     let resp = json!({
-        "id": format!("msg_flodex_{}", hex(&id_bytes)),
+        "id": format!("msg_fldx_{}", hex(&id_bytes)),
         "type": "message",
         "role": "assistant",
-        "model": req.model.unwrap_or_else(|| format!("flodex-{}", backend_label(backend))),
+        "model": req.model.unwrap_or_else(|| format!("fldx-{}", backend_label(backend))),
         "content": chat_result.content,
         "stop_reason": chat_result.stop_reason,
         "stop_sequence": Value::Null,
@@ -358,7 +358,7 @@ impl IntoResponse for ProxyError {
         tracing::warn!(error = %self, "proxy error");
         let body = json!({
             "type": "error",
-            "error": { "type": "flodex_proxy_error", "message": self.to_string() },
+            "error": { "type": "fldx_proxy_error", "message": self.to_string() },
         });
         (status, Json(body)).into_response()
     }

@@ -58,7 +58,7 @@ struct AppState {
     /// quoted at startup. Used to value each round trip's Usage when
     /// building a channel receipt.
     pricing: Vec<BackendPrice>,
-    /// Resolved from FLODEX_CHAIN_ID. None ⇒ off-chain only mode; channel
+    /// Resolved from FLDX_CHAIN_ID. None ⇒ off-chain only mode; channel
     /// receipts are skipped.
     chain: Option<ChainConfig>,
     /// Per-channel cumulative state. Keyed by 32-byte channel id. v0 is
@@ -81,6 +81,10 @@ struct ChannelState {
     /// Client's Ethereum address, learned on the first ack and asserted
     /// constant thereafter. None until the first ack.
     client_address: Option<[u8; ETH_ADDRESS_SIZE]>,
+    /// On-chain deposit for this channel, fetched on first request and
+    /// cached. Capping `cum_owed` at this is what bounds the node's risk;
+    /// requests are refused with 402 once `cum_owed >= deposit`.
+    deposit: Option<u128>,
 }
 
 const ACTIVITY_RETENTION_MS: i64 = 30_000;
@@ -208,7 +212,7 @@ async fn main() -> Result<()> {
     if mock_tee.is_none() && local_llm.is_none() {
         return Err(anyhow!(
             "no backends configured. Set ANTHROPIC_API_KEY for mock-tee, \
-             FLODEX_LLAMA_MODEL for local, or both."
+             FLDX_LLAMA_MODEL for local, or both."
         ));
     }
 
@@ -241,7 +245,7 @@ async fn main() -> Result<()> {
         backends = ?backends,
         identity_pubkey = %identity_pubkey_hex,
         ecdh_pubkey = %B64.encode(state.keys.public.as_bytes()),
-        "flodex node ready"
+        "fldx node ready"
     );
 
     if let Some(ref chain) = state.chain {
@@ -256,10 +260,10 @@ async fn main() -> Result<()> {
         );
     }
 
-    let addr = std::env::var("FLODEX_NODE_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
+    let addr = std::env::var("FLDX_NODE_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
     let advertise_url =
-        std::env::var("FLODEX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
-    let max_tokens = std::env::var("FLODEX_NODE_MAX_TOKENS")
+        std::env::var("FLDX_NODE_URL").unwrap_or_else(|_| format!("http://{addr}"));
+    let max_tokens = std::env::var("FLDX_NODE_MAX_TOKENS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000u32);
@@ -292,7 +296,7 @@ async fn main() -> Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
-    if let Ok(coord_url) = std::env::var("FLODEX_COORDINATOR") {
+    if let Ok(coord_url) = std::env::var("FLDX_COORDINATOR") {
         let ecdh_pubkey_b64 = B64.encode(state.keys.public.as_bytes());
         let backends_for_bids = backends.clone();
         let pricing_for_bids = pricing.clone();
@@ -327,16 +331,16 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
-    tracing::info!("flodex node listening on http://{addr}");
+    tracing::info!("fldx node listening on http://{addr}");
     axum::serve(listener, app).await.expect("serve");
     Ok(())
 }
 
 /// Stake amount the node will lock when calling `register()`. Defaults to
-/// 100 USDC = 100_000_000 base units; override with `FLODEX_NODE_STAKE` (raw
+/// 100 USDC = 100_000_000 base units; override with `FLDX_NODE_STAKE` (raw
 /// USDC base units, decimal).
 fn read_stake() -> u128 {
-    std::env::var("FLODEX_NODE_STAKE")
+    std::env::var("FLDX_NODE_STAKE")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000_000)
@@ -406,10 +410,10 @@ fn read_pricing(backends: &[BackendType]) -> Vec<BackendPrice> {
         .iter()
         .map(|b| {
             let env_key = match b {
-                BackendType::MockTee => "FLODEX_NODE_PRICE_MOCK_TEE",
-                BackendType::Local => "FLODEX_NODE_PRICE_LOCAL",
-                BackendType::Fhe => "FLODEX_NODE_PRICE_FHE",
-                BackendType::Mcp => "FLODEX_NODE_PRICE_MCP",
+                BackendType::MockTee => "FLDX_NODE_PRICE_MOCK_TEE",
+                BackendType::Local => "FLDX_NODE_PRICE_LOCAL",
+                BackendType::Fhe => "FLDX_NODE_PRICE_FHE",
+                BackendType::Mcp => "FLDX_NODE_PRICE_MCP",
             };
             // Env var is a float in USDC dollars per 1k tokens (e.g. "0.015"),
             // converted to raw USDC base units (6 decimals) for protocol +
@@ -579,7 +583,7 @@ async fn init_backends() -> Result<(Option<MockTeeBackend>, Option<LocalLlmBacke
     let mock_tee = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(key) => {
             let model =
-                std::env::var("FLODEX_NODE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+                std::env::var("FLDX_NODE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
             tracing::info!(model = %model, "initializing mock-tee backend (Anthropic)");
             let provider: Box<dyn ChatProvider> =
                 Box::new(AnthropicProvider::new(AnthropicClient::new(key), model));
@@ -589,11 +593,11 @@ async fn init_backends() -> Result<(Option<MockTeeBackend>, Option<LocalLlmBacke
         Err(_) => None,
     };
 
-    // local backend is enabled when FLODEX_LLAMA_MODEL is set.
-    let (local_llm, llama_server) = match std::env::var("FLODEX_LLAMA_MODEL") {
+    // local backend is enabled when FLDX_LLAMA_MODEL is set.
+    let (local_llm, llama_server) = match std::env::var("FLDX_LLAMA_MODEL") {
         Ok(spec_str) => {
             tracing::info!(spec = %spec_str, "initializing local backend (llama-server)");
-            let spec = ModelSpec::parse(&spec_str).context("parsing FLODEX_LLAMA_MODEL")?;
+            let spec = ModelSpec::parse(&spec_str).context("parsing FLDX_LLAMA_MODEL")?;
             let cache = default_cache_dir();
             let model_path = resolve(&spec, &cache).await.context("resolving model")?;
             let server = LlamaServer::spawn(&model_path).await.context("starting llama-server")?;
@@ -659,7 +663,7 @@ async fn execute(
         })?,
         BackendType::Local => state.local_llm.as_ref().ok_or_else(|| {
             ApiError::NotImplemented(
-                "local not configured — set FLODEX_LLAMA_MODEL to enable".into(),
+                "local not configured — set FLDX_LLAMA_MODEL to enable".into(),
             )
         })?,
         other => {
@@ -668,6 +672,15 @@ async fn execute(
             )))
         }
     };
+
+    // DoS gate: if the request is channel-bound, look up the channel's
+    // on-chain deposit (caching it) and refuse upfront when the existing
+    // cum_owed has already crossed the deposit. Spending compute on a
+    // request whose receipt we couldn't recover anything for is a free
+    // ride for the client; that's the DDoS vector.
+    if let Some(id_hex) = req.channel_id.as_deref() {
+        check_channel_solvent(&state, id_hex).await?;
+    }
 
     let agent_response = backend
         .step(&req.session_id, step)
@@ -719,6 +732,66 @@ fn usage_of(resp: &AgentResponse) -> Usage {
     }
 }
 
+/// Ensure `cum_owed < deposit` for the given channel. Fetches deposit on
+/// first sight (lock dropped during the eth_call). Returns 402 if exhausted.
+async fn check_channel_solvent(state: &AppState, channel_id_hex: &str) -> Result<(), ApiError> {
+    let chain = state.chain.as_ref().ok_or_else(|| {
+        ApiError::BadRequest("channel_id supplied but FLDX_CHAIN_ID is unset".into())
+    })?;
+    let channel_addr_hex = chain.channel.ok_or_else(|| {
+        ApiError::BadRequest("channel_id supplied but no channel contract on this chain".into())
+    })?;
+    let channel_addr = parse_addr(channel_addr_hex)
+        .map_err(|e| ApiError::Internal(format!("invalid channel address: {e}")))?;
+    let channel_id = channel_id_from_hex(channel_id_hex)
+        .map_err(|e| ApiError::BadRequest(format!("invalid channel_id: {e}")))?;
+
+    // Cached deposit + current cum_owed under a brief lock.
+    let (cached_deposit, cum_owed) = {
+        let channels = state.channels.lock().unwrap();
+        match channels.get(&channel_id) {
+            Some(s) => (s.deposit, s.cum_owed),
+            None => (None, 0u128),
+        }
+    };
+    let deposit = match cached_deposit {
+        Some(d) => d,
+        None => {
+            let rpc = chains::rpc_url(chain);
+            let rpc_client = eth::rpc::EthRpc::new(rpc);
+            let data = eth::abi::encode_channels_call(&channel_id);
+            let returndata = rpc_client
+                .eth_call(&channel_addr, &data, None)
+                .await
+                .map_err(|e| ApiError::Internal(format!("channels() eth_call: {e}")))?;
+            let d = eth::abi::decode_channel_deposit(&returndata)
+                .map_err(|e| ApiError::Internal(format!("decode channels(): {e}")))?;
+            // Cache it under the lock.
+            let mut channels = state.channels.lock().unwrap();
+            let entry = channels.entry(channel_id).or_insert_with(|| ChannelState {
+                nonce: 0,
+                cum_owed: 0,
+                last_acked: None,
+                client_address: None,
+                deposit: None,
+            });
+            entry.deposit = Some(d);
+            d
+        }
+    };
+    if deposit == 0 {
+        return Err(ApiError::PaymentRequired(format!(
+            "channel {channel_id_hex} has zero deposit (or doesn't exist on-chain)"
+        )));
+    }
+    if cum_owed >= deposit {
+        return Err(ApiError::PaymentRequired(format!(
+            "channel {channel_id_hex} exhausted: cum_owed {cum_owed} ≥ deposit {deposit}"
+        )));
+    }
+    Ok(())
+}
+
 /// Cost-account a round trip against the channel and produce a node-signed
 /// receipt over the freshly-bumped cumulative state.
 fn build_receipt(
@@ -732,7 +805,7 @@ fn build_receipt(
     let chain = state
         .chain
         .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("channel_id supplied but FLODEX_CHAIN_ID is unset".into()))?;
+        .ok_or_else(|| ApiError::BadRequest("channel_id supplied but FLDX_CHAIN_ID is unset".into()))?;
     let channel_addr_hex = chain
         .channel
         .ok_or_else(|| ApiError::BadRequest("channel_id supplied but no channel contract on this chain".into()))?;
@@ -751,6 +824,7 @@ fn build_receipt(
         cum_owed: 0,
         last_acked: None,
         client_address: None,
+        deposit: None,
     });
 
     // Verify any piggy-backed ack against this channel before we bump state.
@@ -868,7 +942,7 @@ async fn ack(
     let chain = state
         .chain
         .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("FLODEX_CHAIN_ID unset — channels disabled".into()))?;
+        .ok_or_else(|| ApiError::BadRequest("FLDX_CHAIN_ID unset — channels disabled".into()))?;
     let channel_addr_hex = chain
         .channel
         .ok_or_else(|| ApiError::BadRequest("no channel contract on this chain".into()))?;
@@ -883,6 +957,7 @@ async fn ack(
         cum_owed: 0,
         last_acked: None,
         client_address: None,
+        deposit: None,
     });
     verify_and_record_ack(entry, &ack, &ack.update.channel_id, chain.chain_id, &channel_addr)
         .map_err(|e| ApiError::BadRequest(format!("invalid ack: {e}")))?;
@@ -921,7 +996,7 @@ async fn proxy_complete(
         })?,
         BackendType::Local => state.local_llm.as_ref().ok_or_else(|| {
             ApiError::NotImplemented(
-                "local not configured — set FLODEX_LLAMA_MODEL to enable".into(),
+                "local not configured — set FLDX_LLAMA_MODEL to enable".into(),
             )
         })?,
         other => {
@@ -964,6 +1039,8 @@ enum ApiError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    PaymentRequired(String),
+    #[error("{0}")]
     NotImplemented(String),
     #[error("{0}")]
     Internal(String),
@@ -973,6 +1050,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, msg) = match &self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
+            ApiError::PaymentRequired(m) => (StatusCode::PAYMENT_REQUIRED, m.clone()),
             ApiError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.clone()),
             ApiError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m.clone()),
         };

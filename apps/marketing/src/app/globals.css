@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 5 5 16;
+  --fg: 231 236 243;
+  --panel: 10 14 28;
+  --accent: 102 204 255;
+  --track: rgb(0 0 0 / 0.45);
+  --panel-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+}
+
+html,
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: "SF Pro Display", "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at 15% 10%, rgb(var(--accent) / 0.10), transparent 45%),
+    radial-gradient(circle at 85% 80%, rgb(180 140 255 / 0.08), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgb(102 255 170 / 0.04), transparent 60%);
+  min-height: 100vh;
+}
+
+.glass {
+  background: rgb(var(--panel) / 0.6);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgb(var(--accent) / 0.18);
+  box-shadow: var(--panel-shadow);
+}
+
+.glass-soft {
+  background: rgb(var(--panel) / 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgb(var(--accent) / 0.10);
+}
+
+.hex-grid {
+  background-image:
+    linear-gradient(rgb(var(--accent) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--accent) / 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.mono {
+  font-family: "SF Mono", "Geist Mono", ui-monospace, monospace;
+}
+
+/* Subtle scanline / shimmer for the hero badge */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgb(var(--accent) / 0.25) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: shimmer 4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(100%); }
+}
+
+/* Vertical gradient fade for section transitions */
+.fade-edge-top {
+  mask-image: linear-gradient(to bottom, transparent, black 10%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%);
+}
+.fade-edge-bottom {
+  mask-image: linear-gradient(to bottom, black 90%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, black 90%, transparent);
+}
+
+/* Selection color matches the brand accent. */
+::selection {
+  background: rgb(var(--accent) / 0.35);
+  color: rgb(var(--fg));
+}

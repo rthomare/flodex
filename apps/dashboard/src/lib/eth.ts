@@ -1,4 +1,4 @@
-// Helpers for deriving Ethereum identity from flodex node identity_pubkey
+// Helpers for deriving Ethereum identity from fldx node identity_pubkey
 // (33-byte secp256k1 compressed) without round-tripping through the node.
 
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -56,8 +56,8 @@ export function channelUpdateCanonical(
   cumOwed: bigint,
 ): Uint8Array {
   const out = new Uint8Array(192);
-  // Slot 1: keccak256("flodex-v0-channel-update")
-  const domain = keccak_256(new TextEncoder().encode("flodex-v0-channel-update"));
+  // Slot 1: keccak256("fldx-v0-channel-update")
+  const domain = keccak_256(new TextEncoder().encode("fldx-v0-channel-update"));
   out.set(domain, 0);
   // Slot 2: chainId (uint256)
   out.set(u256BeBytes(chainId), 32);

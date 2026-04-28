@@ -7,7 +7,7 @@ reconstruction from git history. See `README.md` for the user-facing overview.
 
 ## Vision
 
-Flodex is a privacy-first, decentralized LLM execution network. Clients send
+fldx is a privacy-first, decentralized LLM execution network. Clients send
 end-to-end encrypted requests; nodes run an agent loop against a pluggable
 execution backend; a thin coordinator helps clients discover nodes without
 becoming a centralized routing point. The thesis is that encrypted transport +
@@ -22,7 +22,7 @@ content. The economic layer (USDC stake + escrow) lives on Base.
 **Working end-to-end:**
 
 - X25519 + HKDF-SHA256 + XChaCha20-Poly1305 transport encryption.
-- **secp256k1 identity** persisted at `~/.flodex/node/identity.json`. ECDSA-
+- **secp256k1 identity** persisted at `~/.fldx/node/identity.json`. ECDSA-
   signed `NodeRegistration` + `NodeHeartbeat`, verified by the coordinator.
 - `ExecutionBackend` trait + `ChatProvider` trait + Anthropic ↔ OpenAI
   translation. Two live backends: `mock-tee` (Claude Opus 4.7) and `local`
@@ -55,7 +55,7 @@ content. The economic layer (USDC stake + escrow) lives on Base.
   land).
 - **Auto-register at node startup**: hand-rolled JSON-RPC + RLP +
   EIP-1559 tx signing in `apps/node/src/eth/` (no alloy/ethers, stays
-  on Rust 1.74). When `FLODEX_CHAIN_ID` selects a chain with a registry,
+  on Rust 1.74). When `FLDX_CHAIN_ID` selects a chain with a registry,
   startup runs `isActive` → if absent, `USDC.approve` + `register`. Falls
   back gracefully on RPC error (cast-send escape hatch still documented).
 - **Bidding (standing offers)**: `Bid` protocol type signed via the same
@@ -119,7 +119,7 @@ Addresses pinned in `packages/chains/src/index.ts` (TS) and
 ### Identity
 
 Two persisted keypairs per node, single file at
-`~/.flodex/node/identity.json` (override via `FLODEX_NODE_IDENTITY_PATH`,
+`~/.fldx/node/identity.json` (override via `FLDX_NODE_IDENTITY_PATH`,
 0600 perms on Unix):
 
 - **secp256k1** — signing identity. Used for off-chain registration /
@@ -132,7 +132,7 @@ Two persisted keypairs per node, single file at
 ### Encryption (per request)
 
 Client ephemeral X25519 → ECDH with node static pub → HKDF-SHA256 (salt =
-sessionId, info = `"flodex-v0-session-key"`) → XChaCha20-Poly1305, 24-byte
+sessionId, info = `"fldx-v0-session-key"`) → XChaCha20-Poly1305, 24-byte
 random nonce. Node re-derives with the same session id.
 
 ### Agent loop
@@ -187,7 +187,7 @@ trait ExecutionBackend {
 - Receipt format: `keccak256(abi.encode(CHANNEL_UPDATE_DOMAIN, chainid,
   address(this), channelId, nonce, cumOwed))`, EIP-191 wrapped, 65-byte
   `r||s||v` signature recovered via OZ ECDSA.
-- Domain separator: `flodex-v0-channel-update` (the contract embeds
+- Domain separator: `fldx-v0-channel-update` (the contract embeds
   `keccak256(...)` as a `bytes32` constant — Rust + TS use the same hash
   via `protocol::channel_update_domain_hash()`).
 - Pricing on the wire: `BackendPrice.price_per_1k` is a decimal **string**
@@ -200,7 +200,7 @@ trait ExecutionBackend {
 
 ```
 apps/
-  client/        TS CLI — uses @flodex/client-lib
+  client/        TS CLI — uses @fldx/client-lib
   coordinator/   Rust axum registry (Dockerfile for Fly)
   dashboard/     Next.js + d3-force + viem (on-chain status panel)
   node/          Rust axum node — backends + agent loop + identity persistence
@@ -218,7 +218,7 @@ crates/
   protocol/      Wire types (Rust source of truth) + canonical signing payloads
 packages/
   chains/        Per-chain addresses (USDC, registry, channel), TS consumers
-  flodex-client/ Shared TS transport (CLI + dashboard)
+  fldx-client/ Shared TS transport (CLI + dashboard)
   protocol/      Re-exports ts-rs–generated types
 fly.toml         Fly.io config for hosted coordinator
 vercel.json      Vercel config for dashboard deploy (workspace-root build)
@@ -266,7 +266,7 @@ vercel.json      Vercel config for dashboard deploy (workspace-root build)
 
 1. **Node calls `registry.register()` on-chain.** Either bump Rust to 1.81+
    for alloy or use ethers-rs on 1.74. Plumb USDC approve + register at
-   startup if `FLODEX_CHAIN_ID` is set. Identity is already correct — just
+   startup if `FLDX_CHAIN_ID` is set. Identity is already correct — just
    wire the call.
 2. **Dashboard opens real escrow sessions.** Wallet connect (RainbowKit /
    WalletConnect) + USDC approve + `escrow.openSession()` before sending
@@ -321,12 +321,12 @@ bun run gen:types
 
 # Local dev
 cargo run -p coordinator         # :8000
-cargo run -p node                # :7777 (needs ANTHROPIC_API_KEY or FLODEX_LLAMA_MODEL)
+cargo run -p node                # :7777 (needs ANTHROPIC_API_KEY or FLDX_LLAMA_MODEL)
 bun run dash                     # :3000
 bun run apps/client/src/index.ts --coordinator http://127.0.0.1:8000 -b mock-tee send "…"
 
 # Demo network: register a local node against the hosted coordinator
-FLODEX_COORDINATOR=https://coordinator.fldx.ai cargo run -p node
+FLDX_COORDINATOR=https://coordinator.fldx.ai cargo run -p node
 
 # Tests
 cargo test                       # Rust workspace

@@ -56,12 +56,12 @@ pub async fn resolve(spec: &ModelSpec, cache_dir: &Path) -> Result<PathBuf> {
 }
 
 pub fn default_cache_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("FLODEX_CACHE") {
+    if let Ok(p) = std::env::var("FLDX_CACHE") {
         return PathBuf::from(p);
     }
     dirs::cache_dir()
-        .map(|d| d.join("flodex").join("models"))
-        .unwrap_or_else(|| PathBuf::from(".flodex-cache/models"))
+        .map(|d| d.join("fldx").join("models"))
+        .unwrap_or_else(|| PathBuf::from(".fldx-cache/models"))
 }
 
 async fn fetch_hf(repo: &str, filename: &str, cache_dir: &Path) -> Result<PathBuf> {

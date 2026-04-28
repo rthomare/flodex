@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
-import type { NodeRegistration, NodeSignedReceipt } from "@flodex/protocol";
+import type { NodeRegistration, NodeSignedReceipt } from "@fldx/protocol";
 import { ethAddressFromCompressed } from "@/lib/eth";
 import type { UseChannelResult } from "@/hooks/useChannel";
 

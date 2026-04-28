@@ -1,5 +1,5 @@
 {
-  "name": "@flodex/client-lib",
+  "name": "@fldx/client-lib",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@flodex/protocol": "workspace:*",
+    "@fldx/protocol": "workspace:*",
     "@noble/ciphers": "0.5.3",
     "@noble/curves": "1.4.0",
     "@noble/hashes": "1.4.0",

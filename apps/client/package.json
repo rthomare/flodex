@@ -1,18 +1,18 @@
 {
-  "name": "@flodex/client",
+  "name": "@fldx/client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "flodex": "src/index.ts"
+    "fldx": "src/index.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@flodex/client-lib": "workspace:*",
-    "@flodex/protocol": "workspace:*",
+    "@fldx/client-lib": "workspace:*",
+    "@fldx/protocol": "workspace:*",
     "@scure/base": "1.1.6",
     "commander": "12.0.0"
   },

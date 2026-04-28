@@ -3,14 +3,14 @@ import "./globals.css";
 import Providers from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "flodex dashboard",
-  description: "client-side debug view for the flodex network",
+  title: "fldx dashboard",
+  description: "client-side debug view for the fldx network",
 };
 
 // Sync the theme attribute before React hydrates to avoid a flash on load.
 const themeBootstrap = `
   try {
-    var t = localStorage.getItem("flodex-theme");
+    var t = localStorage.getItem("fldx-theme");
     if (t === "light" || t === "dark") {
       document.documentElement.setAttribute("data-theme", t);
     }

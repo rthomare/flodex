@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@flodex/protocol", "@flodex/client-lib"],
+  transpilePackages: ["@fldx/protocol", "@fldx/client-lib"],
   reactStrictMode: true,
 };
 

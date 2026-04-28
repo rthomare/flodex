@@ -1,9 +1,6 @@
-# fly.toml app configuration file generated for flodex-dry-sun-2419 on 2026-04-25T20:35:44-07:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# fly.toml — fldx coordinator. See https://fly.io/docs/reference/configuration/.
 
-app = 'flodex-dry-sun-2419'
+app = 'fldx-coordinator'
 primary_region = 'iad'
 
 [build]

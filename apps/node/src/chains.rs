@@ -44,11 +44,11 @@ pub const BASE: ChainConfig = ChainConfig {
     channel: None,
 };
 
-/// Resolve the chain config from the `FLODEX_CHAIN_ID` env var. Returns
+/// Resolve the chain config from the `FLDX_CHAIN_ID` env var. Returns
 /// `None` when the env var is absent or its value isn't recognized — the
 /// node simply runs in off-chain-only mode in that case.
 pub fn from_env() -> Option<ChainConfig> {
-    let raw = std::env::var("FLODEX_CHAIN_ID").ok()?;
+    let raw = std::env::var("FLDX_CHAIN_ID").ok()?;
     let id: u64 = raw.parse().ok()?;
     match id {
         31337 => Some(ANVIL),
@@ -58,9 +58,9 @@ pub fn from_env() -> Option<ChainConfig> {
     }
 }
 
-/// RPC URL with `FLODEX_RPC_URL` override, falling back to the chain's
+/// RPC URL with `FLDX_RPC_URL` override, falling back to the chain's
 /// default. Lets the demo run against a private RPC without recompiling.
 #[allow(dead_code)]
 pub fn rpc_url(cfg: &ChainConfig) -> String {
-    std::env::var("FLODEX_RPC_URL").unwrap_or_else(|_| cfg.rpc_url.to_string())
+    std::env::var("FLDX_RPC_URL").unwrap_or_else(|_| cfg.rpc_url.to_string())
 }

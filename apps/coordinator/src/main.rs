@@ -1,4 +1,4 @@
-//! flodex coordinator — thin node registry with first-match job assignment.
+//! fldx coordinator — thin node registry with first-match job assignment.
 //!
 //! Nodes register and heartbeat; clients POST a JobSpec and get back a matching
 //! node. Registry is in-memory, keyed by node pubkey. Stale entries expire
@@ -86,12 +86,12 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr = std::env::var("FLODEX_COORDINATOR_ADDR")
+    let addr = std::env::var("FLDX_COORDINATOR_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8000".to_string());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
-    tracing::info!("flodex coordinator listening on http://{addr}");
+    tracing::info!("fldx coordinator listening on http://{addr}");
     axum::serve(listener, app).await.expect("serve");
 }
 

@@ -16,3 +16,9 @@ dist/
 
 .env
 .vercel
+
+# Local LLM model cache
+.fldx-cache/
+
+# TypeScript incremental cache
+**/tsconfig.tsbuildinfo

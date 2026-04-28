@@ -1,6 +1,6 @@
 "use client";
 
-// wagmi + RainbowKit config for the flodex dashboard. Base Sepolia is the
+// wagmi + RainbowKit config for the fldx dashboard. Base Sepolia is the
 // only chain we connect to in v0 (the demo network); the user provides a
 // WalletConnect projectId via env var.
 
@@ -12,7 +12,7 @@ const projectId =
   process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? "00000000000000000000000000000000";
 
 export const wagmiConfig = getDefaultConfig({
-  appName: "flodex",
+  appName: "fldx",
   projectId,
   chains: [baseSepolia],
   transports: {
@@ -21,4 +21,4 @@ export const wagmiConfig = getDefaultConfig({
   ssr: true,
 });
 
-export const FLODEX_CHAIN_ID = baseSepolia.id;
+export const FLDX_CHAIN_ID = baseSepolia.id;

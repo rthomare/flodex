@@ -7,7 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {NodeRegistry} from "./NodeRegistry.sol";
 
-/// @title flodex JobChannel
+/// @title fldx JobChannel
 /// @notice Per-(client, node) USDC payment channels. Each agent request
 ///         produces an off-chain bilaterally-signed cumulative state
 ///         (nonce, cumOwed). Closing the channel submits the highest
@@ -25,14 +25,14 @@ import {NodeRegistry} from "./NodeRegistry.sol";
 contract JobChannel {
     using SafeERC20 for IERC20;
 
-    /// keccak256("flodex-v0-channel-update"). Off-chain code (Rust + TS) builds
+    /// keccak256("fldx-v0-channel-update"). Off-chain code (Rust + TS) builds
     /// abi.encode(CHANNEL_UPDATE_DOMAIN, chainid, address(this), channelId,
     /// nonce, cumOwed) — six fixed 32-byte slots — keccak's the result, then
     /// EIP-191 wraps. Encoding the domain as bytes32 (precomputed hash)
     /// instead of a string keeps the layout deterministic across Rust/TS
     /// without an ABI encoder dep.
     bytes32 public constant CHANNEL_UPDATE_DOMAIN =
-        keccak256("flodex-v0-channel-update");
+        keccak256("fldx-v0-channel-update");
 
     enum Status {
         None,

@@ -1,5 +1,5 @@
 // Chain configuration shared between dashboard, CLI, and (later) any TS code
-// that interacts with on-chain flodex state. Rust-side consumers (the node
+// that interacts with on-chain fldx state. Rust-side consumers (the node
 // binary) read addresses from env vars instead — they don't import this.
 //
 // USDC addresses are Circle's canonical deployments. Verify against
@@ -16,9 +16,9 @@ export type ChainName = "anvil" | "baseSepolia" | "base";
 export interface ChainAddresses {
   /** ERC20 stake/payment token (real USDC on Base, MockUSDC on Anvil). */
   usdc: `0x${string}`;
-  /** flodex NodeRegistry. `null` until contracts are deployed on this chain. */
+  /** fldx NodeRegistry. `null` until contracts are deployed on this chain. */
   registry: `0x${string}` | null;
-  /** flodex JobChannel (payment-channel escrow). `null` until deployed. */
+  /** fldx JobChannel (payment-channel escrow). `null` until deployed. */
   channel: `0x${string}` | null;
 }
 
@@ -93,7 +93,7 @@ export function requireDeployed(chainId: number): ChainConfig & {
   const c = getChain(chainId);
   if (!c.addresses.registry || !c.addresses.channel) {
     throw new Error(
-      `flodex contracts not deployed on ${c.name} (chainId ${chainId}). ` +
+      `fldx contracts not deployed on ${c.name} (chainId ${chainId}). ` +
         `See contracts/README.md for deployment.`,
     );
   }

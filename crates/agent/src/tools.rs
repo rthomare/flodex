@@ -103,7 +103,7 @@ impl WebFetchTool {
 
     pub fn new() -> Self {
         let http = reqwest::Client::builder()
-            .user_agent("flodex-node/0.0.0")
+            .user_agent("fldx-node/0.0.0")
             .timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()

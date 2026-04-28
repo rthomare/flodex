@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { encodeFunctionData, type Hex } from "viem";
-import type { ClientAck, NodeSignedReceipt } from "@flodex/protocol";
-import { getChain } from "@flodex/chains";
+import type { ClientAck, NodeSignedReceipt } from "@fldx/protocol";
+import { getChain } from "@fldx/chains";
 import { erc20Abi, jobChannelAbi } from "@/lib/abis";
 import { channelIdOf, channelUpdateCanonical, keccak } from "@/lib/eth";
 
@@ -23,7 +23,7 @@ export interface ChannelState {
   lastAck?: ClientAck;
 }
 
-const STORAGE_KEY = "flodex-channel-state-v1";
+const STORAGE_KEY = "fldx-channel-state-v1";
 
 function readStorage(): Record<string, ChannelState> {
   if (typeof window === "undefined") return {};

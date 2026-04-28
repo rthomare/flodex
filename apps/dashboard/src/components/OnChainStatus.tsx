@@ -1,5 +1,5 @@
 "use client";
-import { getChain } from "@flodex/chains";
+import { getChain } from "@fldx/chains";
 import { useOnChainStatus } from "@/hooks/useOnChainStatus";
 
 function shortAddr(addr: string | null): string {

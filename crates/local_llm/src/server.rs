@@ -10,7 +10,7 @@
 //! - Linux/Windows: no sandbox in v0 — a warning is logged. Real enforcement
 //!   on Linux needs seccomp or systemd-run scopes; tracked for a follow-up.
 //!
-//! Set `FLODEX_SANDBOX=0` to bypass the sandbox wrapper (useful for debugging
+//! Set `FLDX_SANDBOX=0` to bypass the sandbox wrapper (useful for debugging
 //! profile issues).
 
 use anyhow::{anyhow, bail, Result};
@@ -93,7 +93,7 @@ async fn wait_for_ready(base_url: &str) -> Result<()> {
 }
 
 fn build_command(model: &Path, port: u16) -> Command {
-    let sandbox_disabled = std::env::var("FLODEX_SANDBOX")
+    let sandbox_disabled = std::env::var("FLDX_SANDBOX")
         .map(|v| v == "0" || v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false"))
         .unwrap_or(false);
 
@@ -125,7 +125,7 @@ fn build_command(model: &Path, port: u16) -> Command {
     if !sandbox_disabled {
         tracing::warn!(
             "no sandbox wrapper on this platform — llama-server runs unsandboxed. \
-             Set FLODEX_SANDBOX=0 to silence; follow-up will add seccomp/systemd-run on Linux."
+             Set FLDX_SANDBOX=0 to silence; follow-up will add seccomp/systemd-run on Linux."
         );
     }
 

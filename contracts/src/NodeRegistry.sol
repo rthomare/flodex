@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @title flodex NodeRegistry
+/// @title fldx NodeRegistry
 /// @notice On-chain registry of compute nodes. Each node stakes the configured
 ///         ERC20 token (USDC on prod) and advertises its endpoint, ECDH
 ///         transport key, supported backends, and per-backend pricing. The

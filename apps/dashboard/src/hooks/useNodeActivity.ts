@@ -4,7 +4,7 @@ import type {
   NodeActivityReport,
   NodeRegistration,
   RequestRecord,
-} from "@flodex/protocol";
+} from "@fldx/protocol";
 
 /** Flattened tuple — (which node) + (what's happening there). */
 export interface NodeActivityEntry {

@@ -7,8 +7,8 @@ import {
   matchJob,
   runAgentLoop,
   type ToolHandlerMap,
-} from "@flodex/client-lib";
-import type { BackendType, JobSpec } from "@flodex/protocol";
+} from "@fldx/client-lib";
+import type { BackendType, JobSpec } from "@fldx/protocol";
 
 type GlobalOpts = {
   node: string;
@@ -33,8 +33,8 @@ const clientTools: ToolHandlerMap = {
 };
 
 const program = new Command()
-  .name("flodex")
-  .description("flodex client CLI")
+  .name("fldx")
+  .description("fldx client CLI")
   .option("-n, --node <url>", "node URL (ignored if --coordinator is set)", "http://127.0.0.1:7777")
   .option("-b, --backend <name>", "execution backend", "mock-tee")
   .option("--coordinator <url>", "coordinator URL for node discovery")

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { NodeRegistration } from "@flodex/protocol";
+import type { NodeRegistration } from "@fldx/protocol";
 
 /** Poll coordinator /nodes every `intervalMs` milliseconds. */
 export function useNodes(coordinatorUrl: string, intervalMs = 2000) {

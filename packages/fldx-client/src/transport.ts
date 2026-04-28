@@ -15,9 +15,9 @@ import type {
   JobSpec,
   NodeInfo,
   NodeSignedReceipt,
-} from "@flodex/protocol";
+} from "@fldx/protocol";
 
-const HKDF_INFO = new TextEncoder().encode("flodex-v0-session-key");
+const HKDF_INFO = new TextEncoder().encode("fldx-v0-session-key");
 
 export async function fetchNodeInfo(nodeUrl: string): Promise<NodeInfo> {
   const res = await fetch(`${nodeUrl}/info`);

@@ -1,4 +1,4 @@
-# flodex
+# fldx
 
 A privacy-first, decentralized LLM execution network. Clients send end-to-end
 encrypted requests to nodes; nodes run an agent loop against a pluggable
@@ -32,8 +32,8 @@ it from your laptop in a few minutes (see [Onboarding](#onboarding)).
 
 The off-chain coordinator and the on-chain registry coexist: nodes register
 off-chain to participate in the dashboard's discovery layer, and on-chain
-when `FLODEX_CHAIN_ID` is set (auto-register at startup). On-chain identity
-is the secp256k1 keypair the node persists at `~/.flodex/node/identity.json`,
+when `FLDX_CHAIN_ID` is set (auto-register at startup). On-chain identity
+is the secp256k1 keypair the node persists at `~/.fldx/node/identity.json`,
 same key in both places.
 
 ### Two-laptop demo runbook
@@ -43,13 +43,13 @@ nodes against the live demo coordinator and pay each other in Sepolia USDC.
 
 **Prerequisites (per laptop):**
 - ~0.05 Sepolia ETH on the node's Ethereum address (printed by the node at
-  startup when `FLODEX_CHAIN_ID=84532` is set — start, copy, Ctrl+C,
+  startup when `FLDX_CHAIN_ID=84532` is set — start, copy, Ctrl+C,
   fund, restart).
 - ≥100 Sepolia USDC on the same address (registry's minimum stake).
 - Wallet (MetaMask) loaded with a separate "client" key holding ≥10
   Sepolia USDC for opening a channel against the other party's node.
 - A publicly-reachable URL for the node (e.g. via `cloudflared tunnel
-  --url http://localhost:7777` or ngrok). Set `FLODEX_NODE_URL` to it.
+  --url http://localhost:7777` or ngrok). Set `FLDX_NODE_URL` to it.
 
 **One-time per network: deploy `JobChannel`** (whichever of you does it,
 share the resulting address):
@@ -78,10 +78,10 @@ your dashboards point at the same contract.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://coordinator.fldx.ai \
-FLODEX_NODE_URL=https://your.tunnel.example \
-FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
-FLODEX_CHAIN_ID=84532 \
+FLDX_COORDINATOR=https://coordinator.fldx.ai \
+FLDX_NODE_URL=https://your.tunnel.example \
+FLDX_NODE_PRICE_MOCK_TEE=0.005 \
+FLDX_CHAIN_ID=84532 \
 cargo run --release -p node
 ```
 
@@ -132,17 +132,17 @@ channel is independent.
 cargo build --release -p node
 
 # 2. Pick a backend. Either `mock-tee` (set ANTHROPIC_API_KEY) or `local`
-#    (set FLODEX_LLAMA_MODEL — see "Backends" below).
+#    (set FLDX_LLAMA_MODEL — see "Backends" below).
 
 # 3. Register against the hosted coordinator
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://coordinator.fldx.ai \
-FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
-./target/release/flodex-node
+FLDX_COORDINATOR=https://coordinator.fldx.ai \
+FLDX_NODE_PRICE_MOCK_TEE=0.005 \
+./target/release/fldx-node
 ```
 
 The first run generates a persistent identity at
-`~/.flodex/node/identity.json`. Same identity (same secp256k1 pubkey) every
+`~/.fldx/node/identity.json`. Same identity (same secp256k1 pubkey) every
 restart. Heartbeats every 10s. Watch the coordinator log it joining at
 `curl https://coordinator.fldx.ai/nodes`.
 
@@ -201,10 +201,10 @@ These two files are required to stay in lockstep — see CLAUDE.md's invariants.
 
 ### Register your node on-chain
 
-The node auto-registers at startup when `FLODEX_CHAIN_ID` selects a chain
+The node auto-registers at startup when `FLDX_CHAIN_ID` selects a chain
 that has a registry deployed. The flow:
 
-1. Reads `~/.flodex/node/identity.json` to derive the node's Ethereum
+1. Reads `~/.fldx/node/identity.json` to derive the node's Ethereum
    address (same secp256k1 key as the off-chain identity).
 2. Calls `NodeRegistry.isActive(myAddr)`. If already active, skips.
 3. Otherwise sends `USDC.approve(registry, stake)` and
@@ -214,15 +214,15 @@ Pre-fund the node's address with Sepolia ETH + USDC before starting:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
-FLODEX_COORDINATOR=https://coordinator.fldx.ai \
-FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
-FLODEX_CHAIN_ID=84532 \
-FLODEX_NODE_URL=https://your.public.node.url \
-./target/release/flodex-node
+FLDX_COORDINATOR=https://coordinator.fldx.ai \
+FLDX_NODE_PRICE_MOCK_TEE=0.005 \
+FLDX_CHAIN_ID=84532 \
+FLDX_NODE_URL=https://your.public.node.url \
+./target/release/fldx-node
 ```
 
-Optional knobs: `FLODEX_NODE_STAKE` (raw USDC base units, default
-`100000000` = 100 USDC), `FLODEX_RPC_URL` (override the default RPC).
+Optional knobs: `FLDX_NODE_STAKE` (raw USDC base units, default
+`100000000` = 100 USDC), `FLDX_RPC_URL` (override the default RPC).
 
 If the auto-register fails (RPC outage, insufficient gas, etc.) the node
 keeps running off-chain so you can still serve free traffic; the warning
@@ -290,9 +290,9 @@ cast send "$REGISTRY" \
 **Fastest path — tmux:**
 
 ```bash
-# One-time: fill out .env with at least ANTHROPIC_API_KEY and/or FLODEX_LLAMA_MODEL
+# One-time: fill out .env with at least ANTHROPIC_API_KEY and/or FLDX_LLAMA_MODEL
 echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
-echo "FLODEX_LLAMA_MODEL=hf://bartowski/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf" >> .env
+echo "FLDX_LLAMA_MODEL=hf://bartowski/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf" >> .env
 
 # Start everything in one tmux session
 bun run dev
@@ -318,8 +318,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 cargo run -p coordinator                             # http://127.0.0.1:8000
 
 # Terminal 2 — node wired to Claude
-FLODEX_COORDINATOR=http://127.0.0.1:8000 \
-FLODEX_NODE_PRICE_MOCK_TEE=0.005 \
+FLDX_COORDINATOR=http://127.0.0.1:8000 \
+FLDX_NODE_PRICE_MOCK_TEE=0.005 \
 cargo run -p node                                    # http://127.0.0.1:7777
 
 # Terminal 3 — client CLI (routed via coordinator)
@@ -337,10 +337,10 @@ Add a second node with a local LLM:
 
 ```bash
 # Terminal 5 — local-LLM node (requires llama-server)
-FLODEX_COORDINATOR=http://127.0.0.1:8000 \
-FLODEX_NODE_ADDR=127.0.0.1:7778 \
-FLODEX_NODE_PRICE_LOCAL=0 \
-FLODEX_LLAMA_MODEL=hf://unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf \
+FLDX_COORDINATOR=http://127.0.0.1:8000 \
+FLDX_NODE_ADDR=127.0.0.1:7778 \
+FLDX_NODE_PRICE_LOCAL=0 \
+FLDX_LLAMA_MODEL=hf://unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf \
 cargo run -p node
 ```
 
@@ -391,7 +391,7 @@ Optional:
 | Package                  | Purpose                                                                     |
 | ------------------------ | --------------------------------------------------------------------------- |
 | `packages/protocol`      | Re-exports TS bindings generated from the Rust `protocol` crate             |
-| `packages/flodex-client` | Shared encryption + agent-loop transport used by both the CLI and dashboard |
+| `packages/fldx-client` | Shared encryption + agent-loop transport used by both the CLI and dashboard |
 
 ---
 
@@ -402,7 +402,7 @@ Selected per request via the `backend` field on the encrypted envelope.
 | Backend   | ID         | Status                          | Enabled by                                          |
 | --------- | ---------- | ------------------------------- | --------------------------------------------------- |
 | MockTEE   | `mock-tee` | **Works** — Claude-backed today | Set `ANTHROPIC_API_KEY`                             |
-| Local LLM | `local`    | **Works** — llama.cpp-backed    | Set `FLODEX_LLAMA_MODEL` (+ install `llama-server`) |
+| Local LLM | `local`    | **Works** — llama.cpp-backed    | Set `FLDX_LLAMA_MODEL` (+ install `llama-server`) |
 | FHE       | `fhe`      | Stub only                       | — (planned research track)                          |
 | MCP       | `mcp`      | Stub only                       | — (planned)                                         |
 
@@ -411,10 +411,10 @@ which ones each node supports.
 
 ### Model specs for the local backend
 
-`FLODEX_LLAMA_MODEL` accepts:
+`FLDX_LLAMA_MODEL` accepts:
 
 - `hf://owner/repo/filename.gguf` — fetched from HuggingFace Hub,
-  cached under `~/.cache/flodex/models/` (or `$FLODEX_CACHE`).
+  cached under `~/.cache/fldx/models/` (or `$FLDX_CACHE`).
 - `file:///absolute/path/to/model.gguf` — local file.
 - `/abs/path/to/model.gguf` — bare absolute path.
 
@@ -432,7 +432,7 @@ Node spawns `llama-server` as a child process inside an OS sandbox:
 | Linux   | Unsandboxed (with warning)   | Follow-up: seccomp-bpf or `systemd-run` scopes        |
 | Windows | Unsandboxed                  | Follow-up                                             |
 
-`FLODEX_SANDBOX=0` bypasses the wrapper (debug escape hatch).
+`FLDX_SANDBOX=0` bypasses the wrapper (debug escape hatch).
 
 ---
 
@@ -493,7 +493,7 @@ Per request:
 
 1. Client generates an ephemeral X25519 keypair.
 2. Shared secret = ECDH(client_priv, node_pub).
-3. Symmetric key = HKDF-SHA256(shared, salt = sessionId, info = "flodex-v0-session-key").
+3. Symmetric key = HKDF-SHA256(shared, salt = sessionId, info = "fldx-v0-session-key").
 4. Plaintext (JSON-encoded `AgentStep`) encrypted with XChaCha20-Poly1305;
    24-byte random nonce.
 5. Encrypted payload + client pub + nonce + session id sent to
@@ -505,7 +505,7 @@ Node:
 2. Decrypts, runs the agent step, re-encrypts with a fresh nonce.
 
 The node persists both keypairs (X25519 ECDH + secp256k1 identity) at
-`~/.flodex/node/identity.json` (override via `FLODEX_NODE_IDENTITY_PATH`) so
+`~/.fldx/node/identity.json` (override via `FLDX_NODE_IDENTITY_PATH`) so
 node identity is stable across restarts. Registrations and heartbeats are
 ECDSA-signed; the coordinator verifies the signature before storing or
 refreshing the entry.
@@ -564,25 +564,25 @@ See the dashboard README section in `apps/dashboard/` for per-panel details.
 | Var                          | Default                    | Purpose                                       |
 | ---------------------------- | -------------------------- | --------------------------------------------- |
 | `ANTHROPIC_API_KEY`          | —                          | Enables the `mock-tee` backend                |
-| `FLODEX_NODE_MODEL`          | `claude-opus-4-7`          | Anthropic model used by `mock-tee`            |
-| `FLODEX_LLAMA_MODEL`         | —                          | Enables the `local` backend (HF/file spec)    |
-| `FLODEX_CACHE`               | `~/.cache/flodex/models`   | Model-download cache                          |
-| `FLODEX_SANDBOX`             | on                         | Set to `0` to bypass the llama-server sandbox |
-| `FLODEX_NODE_ADDR`           | `127.0.0.1:7777`           | Bind address                                  |
-| `FLODEX_NODE_URL`            | `http://$FLODEX_NODE_ADDR` | URL advertised to the coordinator             |
-| `FLODEX_NODE_MAX_TOKENS`     | `100000`                   | Capacity advertised                           |
-| `FLODEX_NODE_PRICE_MOCK_TEE` | `0.0`                      | Dollars per 1K tokens for mock-tee (× 1e6 → on-chain raw USDC) |
-| `FLODEX_NODE_PRICE_LOCAL`    | `0.0`                      | Dollars per 1K tokens for local                |
-| `FLODEX_COORDINATOR`         | —                          | If set, node registers + heartbeats here      |
-| `FLODEX_CHAIN_ID`            | —                          | `84532` for Base Sepolia. Enables channel receipts. |
-| `FLODEX_RPC_URL`             | chain default              | RPC endpoint override (Alchemy / Infura)      |
+| `FLDX_NODE_MODEL`          | `claude-opus-4-7`          | Anthropic model used by `mock-tee`            |
+| `FLDX_LLAMA_MODEL`         | —                          | Enables the `local` backend (HF/file spec)    |
+| `FLDX_CACHE`               | `~/.cache/fldx/models`   | Model-download cache                          |
+| `FLDX_SANDBOX`             | on                         | Set to `0` to bypass the llama-server sandbox |
+| `FLDX_NODE_ADDR`           | `127.0.0.1:7777`           | Bind address                                  |
+| `FLDX_NODE_URL`            | `http://$FLDX_NODE_ADDR` | URL advertised to the coordinator             |
+| `FLDX_NODE_MAX_TOKENS`     | `100000`                   | Capacity advertised                           |
+| `FLDX_NODE_PRICE_MOCK_TEE` | `0.0`                      | Dollars per 1K tokens for mock-tee (× 1e6 → on-chain raw USDC) |
+| `FLDX_NODE_PRICE_LOCAL`    | `0.0`                      | Dollars per 1K tokens for local                |
+| `FLDX_COORDINATOR`         | —                          | If set, node registers + heartbeats here      |
+| `FLDX_CHAIN_ID`            | —                          | `84532` for Base Sepolia. Enables channel receipts. |
+| `FLDX_RPC_URL`             | chain default              | RPC endpoint override (Alchemy / Infura)      |
 | `HF_TOKEN`                   | —                          | Optional HuggingFace auth token               |
 
 ### Coordinator
 
 | Var                       | Default          | Purpose      |
 | ------------------------- | ---------------- | ------------ |
-| `FLODEX_COORDINATOR_ADDR` | `127.0.0.1:8000` | Bind address |
+| `FLDX_COORDINATOR_ADDR` | `127.0.0.1:8000` | Bind address |
 
 ### Client CLI
 
@@ -617,7 +617,7 @@ Flags: `-n/--node`, `-b/--backend`, `--coordinator`, `--max-tokens`, `--max-pric
 │   └── script/                # Deploy.s.sol
 └── packages/
     ├── chains/                # Per-chain addresses (USDC, registry, escrow) shared by TS consumers
-    ├── flodex-client/         # Shared TS transport (CLI + dashboard)
+    ├── fldx-client/         # Shared TS transport (CLI + dashboard)
     └── protocol/              # Re-exports ts-rs-generated types
 ```
 
@@ -670,10 +670,10 @@ What it does:
 
 1. Aborts if the working tree is dirty (unless `--skip-pull`).
 2. `git fetch` + checkout + fast-forward `main` from `origin`.
-3. `flyctl deploy --config fly.toml` — coordinator → `coordinator.fldx.ai` (CNAME → `flodex-dry-sun-2419.fly.dev`).
+3. `flyctl deploy --config fly.toml` — coordinator → `coordinator.fldx.ai` (CNAME → `fldx-coordinator.fly.dev`).
 4. `vercel --prod --yes` — dashboard.
 
-Override the branch/remote via `FLODEX_DEPLOY_BRANCH` / `FLODEX_DEPLOY_REMOTE`.
+Override the branch/remote via `FLDX_DEPLOY_BRANCH` / `FLDX_DEPLOY_REMOTE`.
 
 **Prerequisites** (one-time):
 

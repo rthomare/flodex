@@ -202,11 +202,11 @@ pub struct BackendPrice {
 }
 
 /// Domain separator for registration signatures.
-pub const DOMAIN_REGISTER: &str = "flodex-v0-register";
+pub const DOMAIN_REGISTER: &str = "fldx-v0-register";
 /// Domain separator for heartbeat signatures.
-pub const DOMAIN_HEARTBEAT: &str = "flodex-v0-heartbeat";
+pub const DOMAIN_HEARTBEAT: &str = "fldx-v0-heartbeat";
 /// Domain separator for standing-offer bid signatures.
-pub const DOMAIN_BID: &str = "flodex-v0-bid";
+pub const DOMAIN_BID: &str = "fldx-v0-bid";
 
 /// Node advertises itself to the coordinator. The identity_pubkey + signature
 /// pair lets the coordinator verify the registrant owns the claimed identity;
@@ -429,9 +429,9 @@ pub struct ClientAck {
 
 /// Domain string for channel-update signatures. The on-chain contract
 /// embeds `keccak256(CHANNEL_UPDATE_DOMAIN)` as a `bytes32` constant.
-pub const CHANNEL_UPDATE_DOMAIN: &str = "flodex-v0-channel-update";
+pub const CHANNEL_UPDATE_DOMAIN: &str = "fldx-v0-channel-update";
 
-/// `keccak256("flodex-v0-channel-update")`. Computed once; the value is the
+/// `keccak256("fldx-v0-channel-update")`. Computed once; the value is the
 /// same one stored on-chain.
 pub fn channel_update_domain_hash() -> [u8; 32] {
     let mut out = [0u8; 32];
@@ -526,10 +526,10 @@ mod channel_tests {
 
     #[test]
     fn domain_hash_known() {
-        // keccak256("flodex-v0-channel-update") — sanity check that protocol
+        // keccak256("fldx-v0-channel-update") — sanity check that protocol
         // and contract agree on the bytes32 constant.
         let h = channel_update_domain_hash();
-        // Anyone can recompute via `cast keccak "flodex-v0-channel-update"`;
+        // Anyone can recompute via `cast keccak "fldx-v0-channel-update"`;
         // we keep the assertion loose by re-deriving (since recomputing here
         // proves only that Keccak256 is deterministic, not the value).
         // The integration check that matters is the e2e contract verify.

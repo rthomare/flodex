@@ -1,0 +1,9 @@
+# Vercel project for fldx.ai apex marketing site.
+# Root Directory in the Vercel project should be set to `apps/marketing`,
+# so this file scopes the upload to just this app.
+
+node_modules/
+.next/
+*.log
+.DS_Store
+tsconfig.tsbuildinfo

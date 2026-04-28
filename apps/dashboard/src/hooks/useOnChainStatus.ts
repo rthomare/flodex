@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { requireDeployed } from "@flodex/chains";
+import { requireDeployed } from "@fldx/chains";
 import { NODE_REGISTRY_ABI, publicClient } from "@/lib/chain";
 
 export interface OnChainStatus {

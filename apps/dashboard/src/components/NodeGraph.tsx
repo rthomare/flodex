@@ -10,7 +10,7 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
-import type { BackendType, NodeRegistration } from "@flodex/protocol";
+import type { BackendType, NodeRegistration } from "@fldx/protocol";
 import type { SessionRecord } from "@/lib/events";
 
 /**

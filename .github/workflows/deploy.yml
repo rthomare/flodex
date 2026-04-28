@@ -8,8 +8,8 @@ on:
       target:
         description: "What to deploy"
         type: choice
-        default: both
-        options: [both, fly, vercel]
+        default: all
+        options: [all, fly, vercel, dashboard, marketing]
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -18,7 +18,10 @@ concurrency:
 jobs:
   fly:
     name: fly.io (coordinator)
-    if: ${{ github.event_name == 'push' || github.event.inputs.target == 'both' || github.event.inputs.target == 'fly' }}
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'fly'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +30,48 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-  vercel:
+  dashboard:
     name: vercel (dashboard)
-    if: ${{ github.event_name == 'push' || github.event.inputs.target == 'both' || github.event.inputs.target == 'vercel' }}
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'vercel' ||
+      github.event.inputs.target == 'dashboard'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_DASHBOARD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install Vercel CLI
+        run: bun add -g vercel
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+      - name: Build
+        run: vercel build --prod --token "$VERCEL_TOKEN"
+      - name: Deploy
+        run: vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+
+  marketing:
+    name: vercel (marketing)
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'vercel' ||
+      github.event.inputs.target == 'marketing'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/marketing
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_MARKETING }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

@@ -3,7 +3,7 @@ import type {
   BackendType,
   ClientAck,
   NodeSignedReceipt,
-} from "@flodex/protocol";
+} from "@fldx/protocol";
 
 export type ToolHandler = (
   input: unknown,

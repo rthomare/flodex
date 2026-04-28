@@ -39,8 +39,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { base64 } from "@scure/base";
-import { sendStep, postAck } from "@flodex/client-lib";
-import type { ClientAck } from "@flodex/protocol";
+import { sendStep, postAck } from "@fldx/client-lib";
+import type { ClientAck } from "@fldx/protocol";
 
 // ---------- constants ----------
 
@@ -98,7 +98,7 @@ const channelAbi = parseAbi([
 // ---------- pure crypto helpers (mirroring crates/protocol + crates/crypto) ----------
 
 const CHANNEL_UPDATE_DOMAIN = keccak_256(
-  new TextEncoder().encode("flodex-v0-channel-update"),
+  new TextEncoder().encode("fldx-v0-channel-update"),
 );
 
 function ethAddressFromCompressedPub(pubHex: string): `0x${string}` {
@@ -277,7 +277,7 @@ async function main(): Promise<void> {
   const coord = track(
     spawn("cargo", ["run", "-q", "-p", "coordinator"], {
       cwd: repoRoot(),
-      env: { ...process.env, FLODEX_COORDINATOR_ADDR: `127.0.0.1:${COORD_PORT}` },
+      env: { ...process.env, FLDX_COORDINATOR_ADDR: `127.0.0.1:${COORD_PORT}` },
       stdio: ["ignore", "inherit", "inherit"],
     }),
   );
@@ -472,28 +472,28 @@ function repoRoot(): string {
 function buildNodeEnv(identityPath: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    FLODEX_NODE_ADDR: `127.0.0.1:${NODE_PORT}`,
-    FLODEX_NODE_URL: NODE_URL,
-    FLODEX_COORDINATOR: COORD_URL,
-    FLODEX_CHAIN_ID: String(CHAIN_ID),
-    FLODEX_RPC_URL: ANVIL_RPC,
-    FLODEX_NODE_IDENTITY_PATH: identityPath,
-    FLODEX_NODE_STAKE: String(NODE_STAKE),
+    FLDX_NODE_ADDR: `127.0.0.1:${NODE_PORT}`,
+    FLDX_NODE_URL: NODE_URL,
+    FLDX_COORDINATOR: COORD_URL,
+    FLDX_CHAIN_ID: String(CHAIN_ID),
+    FLDX_RPC_URL: ANVIL_RPC,
+    FLDX_NODE_IDENTITY_PATH: identityPath,
+    FLDX_NODE_STAKE: String(NODE_STAKE),
     // Cheap pricing so cumOwed stays small enough not to need >10 USDC of
     // deposit even with longer-than-expected responses.
-    FLODEX_NODE_PRICE_MOCK_TEE: "0.001",
-    FLODEX_NODE_PRICE_LOCAL: "0.001",
+    FLDX_NODE_PRICE_MOCK_TEE: "0.001",
+    FLDX_NODE_PRICE_LOCAL: "0.001",
     // Disable the macOS sandbox for the local backend so a missing
     // sandbox-exec doesn't bring the test down.
-    FLODEX_SANDBOX: "0",
+    FLDX_SANDBOX: "0",
   };
   // Pick a backend: prefer mock-tee with the cheap Haiku model when an
   // Anthropic key is set; otherwise fall back to a tiny local Qwen.
   if (process.env.ANTHROPIC_API_KEY) {
-    env.FLODEX_NODE_MODEL = process.env.FLODEX_NODE_MODEL ?? "claude-haiku-4-5";
+    env.FLDX_NODE_MODEL = process.env.FLDX_NODE_MODEL ?? "claude-haiku-4-5";
   } else {
-    env.FLODEX_LLAMA_MODEL =
-      process.env.FLODEX_LLAMA_MODEL ??
+    env.FLDX_LLAMA_MODEL =
+      process.env.FLDX_LLAMA_MODEL ??
       "hf://bartowski/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf";
   }
   return env;
@@ -512,7 +512,7 @@ function generateIdentity(): Identity {
   const ecdhSeed = crypto.getRandomValues(new Uint8Array(32));
   const idHex = Buffer.from(idSeed).toString("hex");
   const ecdhHex = Buffer.from(ecdhSeed).toString("hex");
-  const dir = mkdtempSync(join(tmpdir(), "flodex-e2e-"));
+  const dir = mkdtempSync(join(tmpdir(), "fldx-e2e-"));
   const path = join(dir, "identity.json");
   writeFileSync(
     path,

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scripts/deploy.sh — pull the latest main and ship to Fly.io + Vercel.
 #
-# By default deploys both targets. Pass --fly-only or --vercel-only to scope.
-# Pass --skip-pull to deploy whatever is currently checked out (useful when
-# you want to verify a branch without merging to main first).
+# By default deploys all three targets (fly + dashboard + marketing). Pass any
+# of the *-only flags to scope. Pass --skip-pull to deploy whatever is currently
+# checked out (useful when verifying a branch without merging to main first).
 #
 # Required tools on PATH:
 #   - git
@@ -14,47 +14,59 @@
 #   FLY_API_TOKEN         — flyctl auth token (alt: `flyctl auth login`)
 #   VERCEL_TOKEN          — vercel token      (alt: `vercel login`)
 #
+# Each Vercel project is linked once via `cd apps/<app> && vercel link` (creates
+# apps/<app>/.vercel/). After that, `vercel --prod` from that folder targets the
+# right project.
+#
 # Optional:
-#   FLODEX_DEPLOY_BRANCH  — branch to deploy (default: main)
-#   FLODEX_DEPLOY_REMOTE  — git remote        (default: origin)
+#   FLDX_DEPLOY_BRANCH  — branch to deploy (default: main)
+#   FLDX_DEPLOY_REMOTE  — git remote        (default: origin)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BRANCH="${FLODEX_DEPLOY_BRANCH:-main}"
-REMOTE="${FLODEX_DEPLOY_REMOTE:-origin}"
+BRANCH="${FLDX_DEPLOY_BRANCH:-main}"
+REMOTE="${FLDX_DEPLOY_REMOTE:-origin}"
 
 DO_FLY=1
-DO_VERCEL=1
+DO_DASHBOARD=1
+DO_MARKETING=1
 DO_PULL=1
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--fly-only|--vercel-only] [--skip-pull] [--help]
+Usage: ${0##*/} [target-flag]... [--skip-pull] [--help]
 
 Pulls the latest $BRANCH from $REMOTE and deploys:
-  - coordinator (Rust) → Fly.io          (uses fly.toml)
-  - dashboard  (Next.js) → Vercel prod   (uses vercel.json)
+  - coordinator (Rust) → Fly.io           (uses fly.toml)
+  - dashboard  (Next.js) → Vercel prod    (apps/dashboard/vercel.json)
+  - marketing  (Next.js) → Vercel prod    (apps/marketing/vercel.json)
 
-Options:
-  --fly-only      Deploy only the Fly.io coordinator
-  --vercel-only   Deploy only the Vercel dashboard
-  --skip-pull     Don't fetch/checkout/pull; deploy current working tree
-  -h, --help      Show this message
+Target flags (any combination; default is all three):
+  --fly-only         Only the Fly.io coordinator
+  --vercel-only      Both Vercel apps (dashboard + marketing)
+  --dashboard-only   Only the dashboard
+  --marketing-only   Only the marketing site
+
+Other:
+  --skip-pull        Don't fetch/checkout/pull; deploy current working tree
+  -h, --help         Show this message
 
 Env overrides:
-  FLODEX_DEPLOY_BRANCH=$BRANCH
-  FLODEX_DEPLOY_REMOTE=$REMOTE
+  FLDX_DEPLOY_BRANCH=$BRANCH
+  FLDX_DEPLOY_REMOTE=$REMOTE
 EOF
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --fly-only)    DO_VERCEL=0 ;;
-    --vercel-only) DO_FLY=0 ;;
-    --skip-pull)   DO_PULL=0 ;;
-    -h|--help)     usage; exit 0 ;;
-    *)             usage >&2; exit 1 ;;
+    --fly-only)        DO_DASHBOARD=0; DO_MARKETING=0 ;;
+    --vercel-only)     DO_FLY=0 ;;
+    --dashboard-only)  DO_FLY=0; DO_MARKETING=0 ;;
+    --marketing-only)  DO_FLY=0; DO_DASHBOARD=0 ;;
+    --skip-pull)       DO_PULL=0 ;;
+    -h|--help)         usage; exit 0 ;;
+    *)                 usage >&2; exit 1 ;;
   esac
   shift
 done
@@ -67,10 +79,14 @@ cd "$ROOT"
 
 # --- preflight ---------------------------------------------------------------
 
+NEED_VERCEL=0
+[ "$DO_DASHBOARD" = 1 ] && NEED_VERCEL=1
+[ "$DO_MARKETING" = 1 ] && NEED_VERCEL=1
+
 [ "$DO_FLY" = 1 ] && ! command -v flyctl >/dev/null 2>&1 && \
   die "flyctl not on PATH. Install: https://fly.io/docs/hands-on/install-flyctl/"
 
-[ "$DO_VERCEL" = 1 ] && ! command -v vercel >/dev/null 2>&1 && \
+[ "$NEED_VERCEL" = 1 ] && ! command -v vercel >/dev/null 2>&1 && \
   die "vercel not on PATH. Install: npm i -g vercel  (or  bun add -g vercel)"
 
 if [ "$DO_PULL" = 1 ]; then
@@ -112,15 +128,26 @@ if [ "$DO_FLY" = 1 ]; then
   log "fly: deployed"
 fi
 
-# --- vercel: dashboard -------------------------------------------------------
+# --- vercel ------------------------------------------------------------------
 
-if [ "$DO_VERCEL" = 1 ]; then
-  log "vercel deploy --prod (dashboard)"
-  VERCEL_ARGS=(--prod --yes)
-  [ -n "${VERCEL_TOKEN:-}" ]      && VERCEL_ARGS+=(--token "$VERCEL_TOKEN")
-  [ -n "${VERCEL_ORG_ID:-}" ]     && VERCEL_ARGS+=(--scope "$VERCEL_ORG_ID")
-  vercel "${VERCEL_ARGS[@]}"
-  log "vercel: deployed"
+# Deploy a single Vercel app from its own folder. The folder must already be
+# linked (`vercel link`) or have VERCEL_PROJECT_ID set in the environment.
+deploy_vercel_app() {
+  local label="$1"; local dir="$2"
+  log "vercel deploy --prod ($label)"
+  local args=(--prod --yes)
+  [ -n "${VERCEL_TOKEN:-}" ]  && args+=(--token "$VERCEL_TOKEN")
+  [ -n "${VERCEL_ORG_ID:-}" ] && args+=(--scope "$VERCEL_ORG_ID")
+  ( cd "$ROOT/$dir" && vercel "${args[@]}" )
+  log "vercel: $label deployed"
+}
+
+if [ "$DO_DASHBOARD" = 1 ]; then
+  deploy_vercel_app dashboard apps/dashboard
+fi
+
+if [ "$DO_MARKETING" = 1 ]; then
+  deploy_vercel_app marketing apps/marketing
 fi
 
 log "done ($SHA)"

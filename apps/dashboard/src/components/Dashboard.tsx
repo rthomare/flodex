@@ -5,12 +5,12 @@ import {
   matchJob,
   runAgentLoop,
   type ToolHandlerMap,
-} from "@flodex/client-lib";
+} from "@fldx/client-lib";
 import type {
   BackendType,
   NodeRegistration,
   NodeSignedReceipt,
-} from "@flodex/protocol";
+} from "@fldx/protocol";
 import { useNodes } from "@/hooks/useNodes";
 import {
   useNodeActivity,
@@ -19,7 +19,7 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { useChannel } from "@/hooks/useChannel";
 import { ethAddressFromCompressed } from "@/lib/eth";
-import { FLODEX_CHAIN_ID } from "@/lib/wagmi";
+import { FLDX_CHAIN_ID } from "@/lib/wagmi";
 import { addUsage, makeLocalSession, type SessionRecord } from "@/lib/events";
 import NodeGraph, { type ActiveRequest } from "./NodeGraph";
 import RequestForm from "./RequestForm";
@@ -99,7 +99,7 @@ export default function Dashboard() {
 
   const channel = useChannel({
     nodeAddress: selectedNodeAddress,
-    chainId: FLODEX_CHAIN_ID,
+    chainId: FLDX_CHAIN_ID,
   });
 
   // Most-recent NodeSignedReceipt observed per node (keyed by X25519 publicKey).
@@ -263,7 +263,7 @@ export default function Dashboard() {
       <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between p-4">
         <div className="pointer-events-auto">
           <div className="text-xs uppercase tracking-widest text-holo-cyan">
-            flodex
+            fldx
           </div>
           <div className="text-sm text-fg/70">
             {nodes.length} node{nodes.length === 1 ? "" : "s"} registered

@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import type { BackendType, NodeRegistration } from "@flodex/protocol";
+import type { BackendType, NodeRegistration } from "@fldx/protocol";
 
 export default function RequestForm({
   nodes,

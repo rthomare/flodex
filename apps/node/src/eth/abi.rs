@@ -126,6 +126,40 @@ pub fn decode_bool(out: &[u8]) -> bool {
     out.len() >= 32 && out[31] != 0
 }
 
+/// `channels(bytes32 channelId)` — JobChannel view returning the inline
+/// `Channel` struct. Encoded as a fixed-size tuple (8 × 32 bytes) since
+/// every member is statically sized.
+pub fn encode_channels_call(channel_id: &[u8; 32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32);
+    out.extend_from_slice(&selector("channels(bytes32)"));
+    out.extend_from_slice(channel_id);
+    out
+}
+
+/// Slot order in the returned tuple matches the on-chain struct:
+///   client, node, deposit, latestCumOwed, latestNonce, challengeDeadline,
+///   openedAt, status — so `deposit` is at byte offset 64 (slot 2).
+/// We restrict the high 16 bytes to zero (anything past u128 is unrealistic
+/// for raw USDC base units) so we can return a `u128` without surprises.
+pub fn decode_channel_deposit(returndata: &[u8]) -> Result<u128, String> {
+    if returndata.len() < 96 {
+        return Err(format!(
+            "channels() return too short: got {} bytes, want ≥ 96",
+            returndata.len()
+        ));
+    }
+    let slot = &returndata[64..96];
+    if slot[..16].iter().any(|b| *b != 0) {
+        return Err(format!(
+            "channels.deposit > u128::MAX (high bytes nonzero): {:?}",
+            &slot[..16]
+        ));
+    }
+    let mut low = [0u8; 16];
+    low.copy_from_slice(&slot[16..]);
+    Ok(u128::from_be_bytes(low))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

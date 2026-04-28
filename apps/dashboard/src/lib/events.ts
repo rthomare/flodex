@@ -1,4 +1,4 @@
-import type { BackendType, RequestStatus, Usage } from "@flodex/protocol";
+import type { BackendType, RequestStatus, Usage } from "@fldx/protocol";
 
 /**
  * Unified session record used across the dashboard. Two sources:

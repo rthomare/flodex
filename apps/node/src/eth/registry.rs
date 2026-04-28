@@ -1,4 +1,4 @@
-//! Auto-register flow. On node startup, when `FLODEX_CHAIN_ID` selects a
+//! Auto-register flow. On node startup, when `FLDX_CHAIN_ID` selects a
 //! chain that has both a registry and an RPC:
 //!
 //! 1. `eth_call NodeRegistry.isActive(myAddr)`. If already active, skip

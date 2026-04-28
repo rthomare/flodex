@@ -4,7 +4,7 @@ import type {
   BackendType,
   ClientAck,
   NodeSignedReceipt,
-} from "@flodex/protocol";
+} from "@fldx/protocol";
 import { sendStep, type SendStepResult } from "./transport.ts";
 import type { AgentEventHandler, ToolHandler, ToolHandlerMap } from "./types.ts";
 
