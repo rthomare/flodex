@@ -6,20 +6,20 @@ import { Reveal } from "./Reveal";
 const truths = [
   {
     n: "01",
-    title: "Your prompts are training data.",
-    body: "Every major hosted provider reserves the right — implicit or explicit — to log, retain, or train on what you send. Privacy policies change. Yours doesn't get to.",
+    title: "API prices keep climbing.",
+    body: "Every quarter the bill goes up — per-token rates, premium tiers, rate limits you can only escape by paying more. The agents you depend on get more expensive every time you blink.",
     color: "text-holo-amber",
   },
   {
     n: "02",
-    title: "Your provider is your trust boundary.",
-    body: "There is no inspection layer between you and the GPU. \"Don't be evil\" is a configuration, not a guarantee. Compromise the operator, compromise everyone.",
+    title: "Running it yourself is a hardware tax.",
+    body: "Open models are catching up, but the GPUs to run them aren't cheap, aren't quiet, and aren't sitting in most people's homes. \"Just run it locally\" is a luxury most of us can't afford.",
     color: "text-holo-red",
   },
   {
     n: "03",
-    title: "You can't verify what ran.",
-    body: "Did your request really hit the model you paid for? The version you expected? On hardware you'd accept? Today, you take their word for it.",
+    title: "Meanwhile, capable machines sit idle.",
+    body: "Gaming rigs, workstations, dev boxes — millions of them are powered on, online, and doing nothing for most of the day. That's compute the world already paid for, going to waste.",
     color: "text-holo-violet",
   },
 ];
@@ -33,7 +33,7 @@ export function Problem() {
             // the problem
           </div>
           <h2 className="text-4xl md:text-6xl font-semibold tracking-tight max-w-3xl leading-[1.1]">
-            Centralized inference asks you to trust three things at once.
+            AI is getting more expensive. The compute to run it isn&apos;t.
           </h2>
         </Reveal>
 

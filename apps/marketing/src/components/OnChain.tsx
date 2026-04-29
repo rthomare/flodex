@@ -6,18 +6,18 @@ import { Reveal } from "./Reveal";
 const numbers = [
   {
     n: "100",
-    unit: "USDC stake",
-    body: "Operators bond capital before clients trust them. Slashing teeth, not vibes.",
+    unit: "stablecoin deposit",
+    body: "Hosts put down a refundable stablecoin deposit before listing. Misbehave and they lose it. Skin in the game, not promises.",
   },
   {
     n: "1,000:1",
-    unit: "receipts → settlements",
-    body: "Off-chain bilateral signatures accumulate. One on-chain tx settles thousands of round trips.",
+    unit: "requests per settlement",
+    body: "You and the host sign tiny receipts off-chain as you go. One on-chain transaction settles thousands of requests. Gas stays out of your way.",
   },
   {
-    n: "1h / 24h",
-    unit: "challenge / reclaim",
-    body: "Unilateral close → 1-hour challenge window. Stuck channel → 24-hour client reclaim. Liveness without custody.",
+    n: "no custody",
+    unit: "ever",
+    body: "Money moves directly between your wallet and the host's. We never hold your funds — there's nothing for us to lose, freeze, or reverse.",
   },
 ];
 
@@ -31,20 +31,21 @@ export function OnChain() {
           </div>
           <div className="grid md:grid-cols-2 gap-12 items-start">
             <h2 className="text-4xl md:text-6xl font-semibold tracking-tight leading-[1.1]">
-              Settled on Base.
+              Pay-per-use,
               <br />
-              <span className="text-fg/50">Not on the gas meter.</span>
+              <span className="text-fg/50">without the gas tax.</span>
             </h2>
             <div className="space-y-5 text-fg/65 leading-relaxed text-[17px]">
               <p>
-                Nodes stake USDC into a registry. Clients open a payment channel
-                per node, deposit once, and pay per request through cumulative
-                signed receipts.
+                Connect your wallet, deposit once into a private channel with a
+                host, and pay per request from there. Each request is a tiny
+                signed receipt — instant, gasless, and only between the two of
+                you.
               </p>
               <p>
-                Your wallet co-signs every round trip — bad debt is bounded to
-                exactly one. The highest bilaterally-signed state settles
-                instantly. No batching service, no rollup, no custodian.
+                Done? Close the channel and the final balance settles on-chain
+                in one transaction. Hosts get paid, you get the rest back.
+                No subscriptions, no middleman, nothing held.
               </p>
             </div>
           </div>

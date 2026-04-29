@@ -67,10 +67,10 @@ export function Hero() {
           transition={{ duration: 0.9, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
           className="text-5xl md:text-7xl lg:text-8xl font-semibold tracking-tight leading-[1.05]"
         >
-          LLM execution
+          AI is getting expensive.
           <br />
           <span className="bg-gradient-to-r from-holo-cyan via-accent to-holo-violet bg-clip-text text-transparent">
-            you don&apos;t have to trust.
+            Your neighbor&apos;s GPU is idle.
           </span>
         </motion.h1>
 
@@ -80,9 +80,10 @@ export function Hero() {
           transition={{ duration: 0.9, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="mt-7 text-lg md:text-xl text-fg/70 max-w-2xl mx-auto leading-relaxed"
         >
-          End-to-end encrypted requests. Pluggable trust tiers. On-chain
-          settlement. fldx is a decentralized network where the operator never
-          sees your prompt — and you can prove it.
+          fldx is a marketplace for AI compute. Rent someone&apos;s machine to
+          run models cheap, or earn by renting yours out when it&apos;s sitting
+          there doing nothing. Pay-per-request, end-to-end encrypted, settled
+          on-chain.
         </motion.p>
 
         <motion.div
@@ -97,16 +98,16 @@ export function Hero() {
             rel="noreferrer"
             className="group relative px-6 py-3 rounded-full bg-accent text-bg mono text-sm font-medium hover:shadow-glow transition-shadow"
           >
-            launch dashboard
+            rent compute
             <span className="ml-2 inline-block transition-transform group-hover:translate-x-1">
               →
             </span>
           </a>
           <a
-            href="#how"
+            href="#earn"
             className="px-6 py-3 rounded-full border border-accent/30 text-fg/90 mono text-sm hover:bg-accent/10 transition-colors"
           >
-            how it works
+            earn with your machine
           </a>
         </motion.div>
 

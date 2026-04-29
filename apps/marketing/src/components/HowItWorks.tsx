@@ -7,21 +7,21 @@ import { Reveal } from "./Reveal";
 const steps = [
   {
     n: "01",
-    label: "client",
-    title: "Encrypt at the source.",
-    body: "X25519 ECDH against the node's static public key. HKDF-SHA256 derives a session key. Payload sealed with XChaCha20-Poly1305. The bytes that leave your machine are unreadable to anyone but the chosen node.",
+    label: "you",
+    title: "Sealed before it leaves.",
+    body: "Your prompt is encrypted on your computer, against the specific node you picked. Once it leaves your machine, only that node can open it. Not the network, not us, not anyone in the middle.",
   },
   {
     n: "02",
-    label: "coordinator",
-    title: "Match without inspecting.",
-    body: "A thin axum service routes by spec — backend, model, price ceiling — never by request body. Nodes register and bid; clients pick. The coordinator is replaceable; the encryption isn't.",
+    label: "marketplace",
+    title: "Matched without being read.",
+    body: "A thin directory points you at a node that fits — model, price, hardware. It only sees the requirements, never the request. We can't read your prompts because we never see them.",
   },
   {
     n: "03",
-    label: "node",
-    title: "Decrypt inside a backend.",
-    body: "The execution backend is the trust boundary. Today: a mock TEE running Claude, or a sandboxed local llama.cpp. Tomorrow: real Nitro/SGX, FHE compute, zkML. Same wire protocol; different physics.",
+    label: "host",
+    title: "Run on someone's hardware.",
+    body: "The node decrypts inside a sealed boundary, runs the model, and returns the answer the same way it came: encrypted end-to-end. Today that boundary is software; tomorrow it's secure hardware and encrypted math.",
   },
 ];
 
@@ -49,11 +49,12 @@ export function HowItWorks() {
             // how it works
           </div>
           <h2 className="text-4xl md:text-6xl font-semibold tracking-tight max-w-3xl leading-[1.1]">
-            Three roles. One encrypted path.
+            Your prompt only opens on the machine running it.
           </h2>
           <p className="mt-6 text-lg text-fg/65 max-w-2xl leading-relaxed">
-            The whole point of fldx is that no link in the chain has to be
-            trusted with your data. Here&apos;s why.
+            Three steps, one encrypted path. Nobody between you and the node
+            can read what you sent — not the marketplace, not the network, not
+            us.
           </p>
         </Reveal>
 
